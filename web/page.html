@@ -1,0 +1,548 @@
+<title>IncidentLens</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+/* Layout: an on-call console. Summary first, then the week on one strip,
+   then a list of incidents beside the evidence for the selected one. */
+:root {
+  --bg: #f3f6f8; --surface: #ffffff; --sunk: #e9eef2;
+  --ink: #15202b; --muted: #586675; --line: #d6dee5;
+  --accent: #0e6b75; --accent-soft: #dceef0;
+  --crit: #bf3327; --crit-soft: #f8dcd8;
+  --warn: #9a6410; --warn-soft: #f6e7c8;
+  --ok: #2a7548; --ok-soft: #d9efe1;
+  --display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --body: "Inter", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f151b; --surface: #172029; --sunk: #1e2933;
+    --ink: #e4ebf1; --muted: #94a2b0; --line: #2b3844;
+    --accent: #5cc4cd; --accent-soft: #173538;
+    --crit: #f07f73; --crit-soft: #47211d;
+    --warn: #e2b25c; --warn-soft: #40321a;
+    --ok: #70c796; --ok-soft: #1b3a29;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f151b; --surface: #172029; --sunk: #1e2933;
+  --ink: #e4ebf1; --muted: #94a2b0; --line: #2b3844;
+  --accent: #5cc4cd; --accent-soft: #173538;
+  --crit: #f07f73; --crit-soft: #47211d;
+  --warn: #e2b25c; --warn-soft: #40321a;
+  --ok: #70c796; --ok-soft: #1b3a29;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--body); }
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 28px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 36px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; margin: 0; text-wrap: balance; }
+h1 { font-size: 30px; letter-spacing: -0.01em; }
+h2 { font-size: 20px; }
+h3 { font-size: 15px; }
+p { margin: 0; }
+.lede { color: var(--muted); max-width: 66ch; }
+.mono { font-family: var(--mono); font-size: 13px; }
+.num { font-variant-numeric: tabular-nums; }
+.label { font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+
+header.top { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: baseline; justify-content: space-between; }
+.top .head { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+  background: var(--warn-soft); color: var(--warn); white-space: nowrap; }
+
+.stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.stat { padding: 16px 18px; display: flex; flex-direction: column; gap: 4px; border-left: 1px solid var(--line); min-width: 0; }
+.stat:first-child { border-left: 0; }
+.stat b { font-family: var(--display); font-size: 28px; font-weight: 600; line-height: 1.1; }
+.stat span { color: var(--muted); font-size: 13px; line-height: 1.4; }
+.stat.bad b { color: var(--crit); }
+@media (max-width: 820px) {
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat { border-left: 0; border-top: 1px solid var(--line); }
+  .stat:nth-child(-n+2) { border-top: 0; }
+  .stat:nth-child(even) { border-left: 1px solid var(--line); }
+}
+
+section { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; min-width: 0; }
+svg { display: block; }
+svg text { font-family: var(--body); fill: var(--muted); font-size: 11px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--muted); }
+.legend i { display: inline-block; width: 12px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.legend i.ln { height: 0; border-top: 2px solid; border-radius: 0; vertical-align: 3px; }
+.legend i.dash { height: 0; border-top: 2px dashed; border-radius: 0; vertical-align: 3px; }
+
+.console { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 860px) { .console { grid-template-columns: minmax(0, 1fr); } }
+.inc-list { display: flex; flex-direction: column; gap: 8px; }
+.inc-btn { text-align: left; font: inherit; color: inherit; cursor: pointer; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px; padding: 11px 13px; display: flex; flex-direction: column; gap: 3px; }
+.inc-btn:hover { border-color: var(--accent); }
+.inc-btn:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.inc-btn[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.inc-btn .row { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.inc-btn .id { font-family: var(--mono); font-size: 13px; font-weight: 500; }
+.inc-btn .when { font-size: 12.5px; color: var(--muted); }
+.inc-btn .what { font-size: 13.5px; }
+.pill { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.pill.real { background: var(--ok-soft); color: var(--ok); }
+.pill.false { background: var(--crit-soft); color: var(--crit); }
+.pill.conf-high { background: var(--ok-soft); color: var(--ok); }
+.pill.conf-medium { background: var(--warn-soft); color: var(--warn); }
+.pill.conf-low { background: var(--crit-soft); color: var(--crit); }
+
+.detail { display: flex; flex-direction: column; gap: 20px; }
+.detail .titlerow { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-radius: 5px; background: var(--sunk); }
+.chip.first { background: var(--accent-soft); color: var(--accent); }
+.verdict { border-left: 3px solid var(--accent); padding: 2px 0 2px 14px; display: flex; flex-direction: column; gap: 4px; }
+.verdict .cause { font-family: var(--display); font-size: 18px; font-weight: 600; }
+.charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; }
+@media (max-width: 640px) { .charts { grid-template-columns: minmax(0, 1fr); } }
+.chart { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.chart .cap { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; }
+.chart .cap span:last-child { color: var(--muted); white-space: nowrap; }
+
+.tl { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.tl li { display: grid; grid-template-columns: 62px 88px minmax(0, 1fr); gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13.5px; }
+.tl li:first-child { border-top: 0; }
+.tl .t { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+.tl .s { font-family: var(--mono); font-size: 12.5px; }
+.tl li.alert .e { color: var(--warn); }
+@media (max-width: 520px) { .tl li { grid-template-columns: 52px minmax(0, 1fr); } .tl .s { display: none; } }
+
+.cand { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; border-top: 1px solid var(--line); }
+.cand:first-of-type { border-top: 0; padding-top: 0; }
+.cand .hd { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.cand .hd b { font-weight: 600; }
+.bar { height: 8px; border-radius: 4px; background: var(--sunk); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--muted); border-radius: 4px; }
+.cand.top .bar i { background: var(--accent); }
+.cand ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--muted); }
+.cand ul li { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 6px; }
+.cand ul li span:first-child { font-family: var(--mono); color: var(--ink); }
+.cand .ev { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.logline { font-family: var(--mono); font-size: 12.5px; background: var(--sunk); border-radius: 6px; padding: 8px 10px; overflow-x: auto; white-space: nowrap; }
+
+.tblwrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; padding: 8px 12px 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.n { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.okc { color: var(--ok); font-weight: 600; } .badc { color: var(--crit); font-weight: 600; }
+
+.cov { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 6px 12px; align-items: center; font-size: 13px; }
+.covrow { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; border-top: 1px solid var(--line); }
+.covrow:first-child { border-top: 0; padding-top: 0; }
+.covbar { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.covbar .bar { flex: 1; height: 10px; }
+.covbar .bar i.ref { background: var(--accent); } .covbar .bar i.trail { background: var(--warn); }
+.covbar span { width: 118px; flex: none; font-variant-numeric: tabular-nums; color: var(--muted); }
+
+.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 820px) { .two { grid-template-columns: minmax(0, 1fr); } }
+.steps { margin: 0; padding: 0; list-style: none; counter-reset: s; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 22px; }
+@media (max-width: 820px) { .steps { grid-template-columns: minmax(0, 1fr); } }
+.steps li { counter-increment: s; display: flex; flex-direction: column; gap: 3px; font-size: 13.5px; color: var(--muted); }
+.steps li b { color: var(--ink); font-family: var(--display); font-size: 15px; }
+.steps li b::before { content: counter(s) ". "; color: var(--accent); }
+pre { margin: 0; font-family: var(--mono); font-size: 12.5px; background: var(--sunk); border-radius: 8px; padding: 12px 14px; overflow-x: auto; }
+footer { color: var(--muted); font-size: 13px; display: flex; flex-direction: column; gap: 10px; }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="head">
+      <h1>IncidentLens</h1>
+      <p class="lede">One week of logs, metrics, deploys and alerts from an eight-service system, reduced to the incidents that happened, when each began and what most likely caused it. Every statement links back to the signal behind it.</p>
+    </div>
+    <span class="tag">Synthetic data, planted faults</span>
+  </header>
+
+  <div class="stats" id="stats"></div>
+
+  <section>
+    <h2>The week</h2>
+    <div class="panel">
+      <div id="week"></div>
+      <div class="legend" style="margin-top:10px">
+        <span><i style="background:var(--crit)"></i>incident (select one)</span>
+        <span><i style="background:var(--warn)"></i>alert</span>
+        <span><i style="background:var(--accent)"></i>deploy</span>
+        <span><i style="background:var(--muted)"></i>signal rejected as noise</span>
+        <span><i style="background:var(--sunk);border:1px solid var(--line)"></i>clean reference day</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Incidents</h2>
+    <div class="console">
+      <div class="inc-list" id="list"></div>
+      <div class="panel detail" id="detail"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Checked against the planted answers</h2>
+    <p class="lede">The generator records what it planted. The pipeline never reads that record; it is only used here, to mark the results.</p>
+    <div class="panel tblwrap"><table id="checks"></table></div>
+  </section>
+
+  <div class="two">
+    <section>
+      <h2>Two definitions of normal</h2>
+      <p class="lede">Share of each fault's minutes that stay flagged. Both baselines notice every fault; they differ on how long they hold on to the slow one.</p>
+      <div class="panel">
+        <div id="cov"></div>
+        <div class="legend" style="margin-top:12px">
+          <span><i style="background:var(--accent)"></i>fixed baseline from the clean first day</span>
+          <span><i style="background:var(--warn)"></i>trailing six-hour baseline</span>
+        </div>
+      </div>
+    </section>
+    <section>
+      <h2>What was rejected</h2>
+      <p class="lede" id="rejlede"></p>
+      <div class="panel tblwrap"><table id="rej"></table></div>
+    </section>
+  </div>
+
+  <section>
+    <h2>Log lines never seen on the clean day</h2>
+    <p class="lede" id="tpllede"></p>
+    <div class="panel" id="tpl" style="display:flex;flex-direction:column;gap:8px"></div>
+  </section>
+
+  <section>
+    <h2>How it works</h2>
+    <div class="panel">
+      <ol class="steps">
+        <li><b>Ingest</b>Four file formats are read onto one minute-by-minute timeline.</li>
+        <li><b>Template the logs</b>IDs and numbers are masked so identical sentences collapse together.</li>
+        <li><b>Score against normal</b>A robust z-score from the median and MAD, after removing the day and night cycle.</li>
+        <li><b>Group into incidents</b>Signals join when they are close in time and connected in the dependency graph.</li>
+        <li><b>Rank the causes</b>Deploys and services are scored, and the arithmetic is shown for each.</li>
+        <li><b>Match earlier incidents</b>Symptom sets are compared so a repeat points back to its first occurrence.</li>
+      </ol>
+    </div>
+  </section>
+
+  <footer>
+    <p>This page is generated by <span class="mono">build_site.py</span> from the same pipeline as <span class="mono">run_demo.py</span>. All data is synthetic.</p>
+    <pre>py scripts/make_sample_data.py
+py run_demo.py
+py build_site.py</pre>
+  </footer>
+</div>
+
+<script type="application/json" id="payload">/*__DATA__*/null</script>
+<script>
+(function () {
+  var D = JSON.parse(document.getElementById('payload').textContent);
+  if (!D) { document.getElementById('detail').textContent = 'No data. Run build_site.py.'; return; }
+  var START = new Date(D.start);
+  var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  var MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var NS = 'http://www.w3.org/2000/svg';
+  function at(m) { return new Date(START.getTime() + m * 60000); }
+  function p2(n) { return (n < 10 ? '0' : '') + n; }
+  function hm(m) { var d = at(m); return p2(d.getHours()) + ':' + p2(d.getMinutes()); }
+  function dayhm(m) { var d = at(m); return DAYS[d.getDay()] + ' ' + p2(d.getDate()) + ' ' + MON[d.getMonth()] + ' ' + hm(m); }
+  function dur(n) { return n >= 120 ? Math.floor(n / 60) + ' h ' + p2(n % 60) + ' min' : n + ' min'; }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function sv(tag, attrs, text) { var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; }
+  function fmtVal(metric, v) {
+    if (metric === 'error_rate') return (v * 100).toFixed(v === 0 ? 0 : v < 0.01 ? 2 : v < 0.02 ? 1 : 0) + '%';
+    if (metric === 'latency_ms') return Math.round(v) + ' ms';
+    return Math.round(v) + '%';
+  }
+  var METRIC = { error_rate: 'error rate', latency_ms: 'latency', cpu_pct: 'CPU', memory_pct: 'memory' };
+  function plain(text) {
+    return text.replace(/new_template:\d+/g, 'a new log line').replace(/template_spike:\d+/g, 'a log spike')
+      .replace(/error_rate/g, 'error rate').replace(/latency_ms/g, 'latency').replace(/memory_pct/g, 'memory').replace(/cpu_pct/g, 'CPU')
+      .replace(/^log a new log line on (\S+), /, 'new log line, ');
+  }
+
+  /* ---------- headline numbers ---------- */
+  var leak = D.checks.filter(function (c) { return c.id === 'memory-leak'; })[0];
+  var causesRight = D.checks.filter(function (c) { return c.real && c.cause_correct; }).length;
+  var noiseOk = D.checks.filter(function (c) { return !c.real && !c.incident; }).length;
+  var stats = [
+    [D.counts.real_found + ' of ' + D.counts.real_planted, 'real faults detected', ''],
+    [causesRight + ' of ' + D.counts.real_planted, 'planted causes ranked first', ''],
+    [leak && leak.alert_delay != null ? dur(leak.alert_delay - leak.detect_delay) : 'n/a', 'earlier than the existing alert on the slow memory leak', ''],
+    [String(noiseOk), noiseOk === 1 ? 'noisy alert correctly not promoted' : 'noisy alerts correctly not promoted', ''],
+    [String(D.counts.false_incidents), D.counts.false_incidents === 1 ? 'false incident, from one low-baseline series' : 'false incidents', D.counts.false_incidents ? 'bad' : '']
+  ];
+  var sEl = document.getElementById('stats');
+  stats.forEach(function (s) { var d = el('div', 'stat num ' + s[2]); d.appendChild(el('b', null, s[0])); d.appendChild(el('span', null, s[1])); sEl.appendChild(d); });
+
+  /* ---------- the week strip ---------- */
+  var selected = null;
+  function drawWeek() {
+    var host = document.getElementById('week'); host.textContent = '';
+    var W = Math.max(280, host.clientWidth), lanes = ['Incidents', 'Alerts', 'Deploys', 'Rejected'];
+    var laneH = 16, gap = 20, top = 14, H = top + lanes.length * (laneH + gap) + 16;
+    var x = function (m) { return (m / D.minutes) * W; };
+    var s = sv('svg', { width: W, height: H, viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'Timeline of the week' });
+    s.appendChild(sv('rect', { x: 0, y: top, width: x(D.reference_hours * 60), height: H - top - 16, fill: 'var(--sunk)' }));
+    for (var d = 0; d <= 7; d++) {
+      s.appendChild(sv('line', { x1: x(d * 1440), x2: x(d * 1440), y1: top, y2: H - 16, stroke: 'var(--line)', 'stroke-width': 1 }));
+      if (d < 7) s.appendChild(sv('text', { x: x(d * 1440) + 4, y: H - 3 }, DAYS[at(d * 1440).getDay()] + (W > 520 ? ' ' + at(d * 1440).getDate() : '')));
+    }
+    lanes.forEach(function (name, i) {
+      var y = top + i * (laneH + gap) + 12;
+      s.appendChild(sv('text', { x: x(D.reference_hours * 60) + 6, y: y - 3, 'font-size': 10.5 }, name));
+      s.appendChild(sv('line', { x1: 0, x2: W, y1: y + laneH / 2, y2: y + laneH / 2, stroke: 'var(--line)', 'stroke-width': 1 }));
+      if (i === 0) D.incidents.forEach(function (inc) {
+        var w = Math.max(5, x(inc.end) - x(inc.start));
+        var r = sv('rect', { x: x(inc.start), y: y, width: w, height: laneH, rx: 2, fill: 'var(--crit)', style: 'cursor:pointer',
+          opacity: selected === inc.id ? 1 : 0.55, stroke: selected === inc.id ? 'var(--ink)' : 'none', 'stroke-width': 1.5 });
+        r.appendChild(sv('title', {}, inc.id + ', ' + dayhm(inc.start)));
+        r.addEventListener('click', function () { select(inc.id); });
+        s.appendChild(r);
+      });
+      var marks = i === 1 ? D.alerts : i === 2 ? D.deploys : i === 3 ? D.rejected_marks.filter(function (r) { return !r.alert_only; }) : [];
+      var fill = i === 1 ? 'var(--warn)' : i === 2 ? 'var(--accent)' : 'var(--muted)';
+      marks.forEach(function (mk) {
+        var r = sv('rect', { x: x(mk.minute) - 1.25, y: y + (i === 3 ? 4 : 0), width: 2.5, height: i === 3 ? laneH - 8 : laneH, fill: fill });
+        r.appendChild(sv('title', {}, dayhm(mk.minute) + (mk.rule ? ', ' + mk.rule + ' on ' + mk.service : mk.version ? ', ' + mk.version + ' to ' + mk.service : '')));
+        s.appendChild(r);
+      });
+    });
+    host.appendChild(s);
+  }
+
+  /* ---------- incident list ---------- */
+  var list = document.getElementById('list');
+  D.incidents.forEach(function (inc) {
+    var b = el('button', 'inc-btn'); b.type = 'button'; b.id = 'btn-' + inc.id;
+    var r1 = el('div', 'row'); r1.appendChild(el('span', 'id', inc.id));
+    r1.appendChild(el('span', 'pill ' + (inc.planted ? 'real' : 'false'), inc.planted ? 'real fault' : 'false alarm'));
+    var top = inc.causes[0];
+    b.appendChild(r1);
+    b.appendChild(el('span', 'what', top ? top.label : 'no candidate'));
+    b.appendChild(el('span', 'when', dayhm(inc.start) + ', ' + dur(inc.end - inc.start + 1)));
+    b.addEventListener('click', function () { select(inc.id); });
+    list.appendChild(b);
+  });
+
+  /* ---------- one chart ---------- */
+  function drawChart(host, c, inc) {
+    host.textContent = '';
+    var W = Math.max(240, host.clientWidth), H = 150, L = 48, R = 8, T = 8, B = 20;
+    var vals = c.values, n = vals.length;
+    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    if (c.metric === 'error_rate' || c.metric === 'latency_ms') lo = 0;
+    else lo = Math.max(0, lo - (hi - lo) * 0.15);
+    hi = hi + (hi - lo) * 0.08;
+    var x = function (m) { return L + ((m - c.from) / (n - 1)) * (W - L - R); };
+    var y = function (v) { return T + (1 - (v - lo) / (hi - lo)) * (H - T - B); };
+    var s = sv('svg', { width: W, height: H, viewBox: '0 0 ' + W + ' ' + H, role: 'img',
+      'aria-label': METRIC[c.metric] + ' on ' + c.service });
+    c.runs.forEach(function (r) {
+      s.appendChild(sv('rect', { x: x(r[0]), y: T, width: Math.max(2, x(r[1]) - x(r[0])), height: H - T - B, fill: 'var(--crit-soft)' }));
+    });
+    [0, 0.5, 1].forEach(function (f) {
+      var v = lo + (hi - lo) * f * 0.92, yy = y(v);
+      s.appendChild(sv('line', { x1: L, x2: W - R, y1: yy, y2: yy, stroke: 'var(--line)', 'stroke-width': 1 }));
+      s.appendChild(sv('text', { x: L - 6, y: yy + 4, 'text-anchor': 'end' }, fmtVal(c.metric, v)));
+    });
+    var end = c.from + n - 1;
+    [[c.from, 'start'], [Math.round((c.from + end) / 2), 'middle'], [end, 'end']].forEach(function (t) {
+      s.appendChild(sv('text', { x: x(t[0]), y: H - 5, 'text-anchor': t[1] }, hm(t[0])));
+    });
+    function vline(m, color, dash) {
+      if (m < c.from || m > end) return;
+      var a = { x1: x(m), x2: x(m), y1: T, y2: H - B, stroke: color, 'stroke-width': 1.5 };
+      if (dash) a['stroke-dasharray'] = '4 3';
+      s.appendChild(sv('line', a));
+    }
+    if (inc.planted_start != null) vline(inc.planted_start, 'var(--muted)', true);
+    inc.deploys.forEach(function (d) { vline(d.minute, 'var(--accent)', false); });
+    inc.alerts.forEach(function (a) { vline(a.minute, 'var(--warn)', false); });
+    var step = Math.max(1, Math.floor(n / (W - L - R)));
+    var pts = [];
+    for (var i = 0; i < n; i += step) pts.push(x(c.from + i).toFixed(1) + ',' + y(vals[i]).toFixed(1));
+    s.appendChild(sv('polyline', { points: pts.join(' '), fill: 'none', stroke: 'var(--ink)', 'stroke-width': 1.3, 'stroke-linejoin': 'round' }));
+    host.appendChild(s);
+  }
+
+  /* ---------- incident detail ---------- */
+  var chartJobs = [];
+  function select(id, quiet) {
+    var inc = D.incidents.filter(function (i) { return i.id === id; })[0] || D.incidents[0];
+    if (!inc) return;
+    selected = inc.id;
+    D.incidents.forEach(function (i) { document.getElementById('btn-' + i.id).setAttribute('aria-pressed', i.id === inc.id ? 'true' : 'false'); });
+    if (!quiet) { try { history.replaceState(null, '', '#' + inc.id.toLowerCase()); } catch (e) { location.hash = inc.id.toLowerCase(); } }
+    var box = document.getElementById('detail'); box.textContent = ''; chartJobs = [];
+
+    var head = el('div'); head.style.cssText = 'display:flex;flex-direction:column;gap:10px';
+    var tr = el('div', 'titlerow');
+    tr.appendChild(el('h3', 'mono', inc.id));
+    tr.appendChild(el('span', 'pill ' + (inc.planted ? 'real' : 'false'), inc.planted ? 'matches planted fault ' + inc.planted : 'not a planted fault'));
+    head.appendChild(tr);
+    head.appendChild(el('p', null, dayhm(inc.start) + ' to ' + hm(inc.end) + ', ' + dur(inc.end - inc.start + 1)));
+    var chips = el('div', 'chips');
+    inc.services.forEach(function (sname) { chips.appendChild(el('span', 'chip' + (sname === inc.first_service ? ' first' : ''), sname + (sname === inc.first_service ? ' (first)' : ''))); });
+    head.appendChild(chips);
+    box.appendChild(head);
+
+    var top = inc.causes[0];
+    if (top) {
+      var v = el('div', 'verdict');
+      v.appendChild(el('span', 'label', 'Most likely cause'));
+      var cr = el('div', 'titlerow'); cr.appendChild(el('span', 'cause', top.label));
+      var conf = (top.confidence || '').split(' ')[0];
+      cr.appendChild(el('span', 'pill conf-' + conf, conf + ' confidence'));
+      v.appendChild(cr);
+      if (inc.causes[1]) v.appendChild(el('p', 'lede', 'Scored ' + top.score + ', against ' + inc.causes[1].score + ' for the next candidate (' + inc.causes[1].label + ').'));
+      else v.appendChild(el('p', 'lede', 'Scored ' + top.score + '. It is the only candidate, so treat it as a hypothesis.'));
+      box.appendChild(v);
+    }
+    if (inc.similar.length) {
+      var sm = inc.similar[0], sp = el('p');
+      sp.appendChild(document.createTextNode('Seen before: '));
+      var a = el('a', null, sm.incident_id); a.href = '#' + sm.incident_id.toLowerCase(); a.style.color = 'var(--accent)';
+      a.addEventListener('click', function (e) { e.preventDefault(); select(sm.incident_id); });
+      sp.appendChild(a);
+      sp.appendChild(document.createTextNode(' on ' + dayhm(sm.start_min) + ', symptom similarity ' + sm.similarity.toFixed(2) + '.'));
+      box.appendChild(sp);
+    }
+
+    var cs = el('div'); cs.style.cssText = 'display:flex;flex-direction:column;gap:12px';
+    cs.appendChild(el('span', 'label', 'Signals that left their baseline'));
+    var grid = el('div', 'charts');
+    inc.charts.forEach(function (c) {
+      var w = el('div', 'chart'), cap = el('div', 'cap');
+      cap.appendChild(el('span', null, c.service + ' ' + METRIC[c.metric]));
+      cap.appendChild(el('span', 'num', 'peak z ' + c.peak_z));
+      var h = el('div'); w.appendChild(cap); w.appendChild(h); grid.appendChild(w);
+      chartJobs.push(function () { drawChart(h, c, inc); });
+    });
+    cs.appendChild(grid);
+    var lg = el('div', 'legend');
+    lg.innerHTML = '<span><i style="background:var(--crit-soft)"></i>flagged minutes</span>' +
+      (inc.planted_start != null ? '<span><i class="dash" style="border-color:var(--muted)"></i>fault actually began</span>' : '') +
+      (inc.deploys.length ? '<span><i class="ln" style="border-color:var(--accent)"></i>deploy</span>' : '') +
+      (inc.alerts.length ? '<span><i class="ln" style="border-color:var(--warn)"></i>alert fired</span>' : '');
+    cs.appendChild(lg);
+    box.appendChild(cs);
+
+    if (inc.new_lines.length) {
+      var nl = el('div'); nl.style.cssText = 'display:flex;flex-direction:column;gap:8px';
+      nl.appendChild(el('span', 'label', 'Log line the system had never written before'));
+      inc.new_lines.slice(0, 2).forEach(function (l) {
+        nl.appendChild(el('div', 'logline', '[' + l.service + '] ' + l.text));
+        nl.appendChild(el('p', 'lede', 'First seen ' + dayhm(l.first) + ', up to ' + l.peak + ' lines a minute.'));
+      });
+      box.appendChild(nl);
+    }
+
+    var tw = el('div'); tw.style.cssText = 'display:flex;flex-direction:column;gap:8px';
+    tw.appendChild(el('span', 'label', 'Timeline'));
+    var ul = el('ul', 'tl');
+    inc.timeline.forEach(function (r) {
+      var li = el('li', r.kind === 'alert' ? 'alert' : '');
+      li.appendChild(el('span', 't', hm(r.minute))); li.appendChild(el('span', 's', r.service)); li.appendChild(el('span', 'e', plain(r.event)));
+      ul.appendChild(li);
+    });
+    tw.appendChild(ul); box.appendChild(tw);
+
+    var cw = el('div'); cw.style.cssText = 'display:flex;flex-direction:column;gap:12px';
+    cw.appendChild(el('span', 'label', 'Candidates considered, with the arithmetic'));
+    var holder = el('div');
+    inc.causes.slice(0, 4).forEach(function (c, i) {
+      var d = el('div', 'cand' + (i === 0 ? ' top' : ''));
+      var hd = el('div', 'hd'); hd.appendChild(el('b', null, c.label)); hd.appendChild(el('span', 'mono num', 'score ' + c.score));
+      d.appendChild(hd);
+      var bar = el('div', 'bar'), fill = el('i'); fill.style.width = Math.min(100, c.score) + '%'; bar.appendChild(fill); d.appendChild(bar);
+      var ul2 = el('ul');
+      c.components.forEach(function (k) { var li = el('li'); li.appendChild(el('span', null, '+' + k[1])); li.appendChild(el('span', null, k[0])); ul2.appendChild(li); });
+      d.appendChild(ul2);
+      c.evidence.forEach(function (e) { d.appendChild(el('div', 'ev', 'Evidence: ' + plain(e))); });
+      holder.appendChild(d);
+    });
+    cw.appendChild(holder); box.appendChild(cw);
+
+    chartJobs.forEach(function (f) { f(); });
+    drawWeek();
+  }
+
+  /* ---------- self-check table ---------- */
+  var ck = document.getElementById('checks');
+  ck.innerHTML = '<thead><tr><th>Planted event</th><th>Kind</th><th>Found as</th><th>Detected</th><th>Existing alert</th><th>Cause ranked first</th></tr></thead>';
+  var tb = el('tbody');
+  D.checks.forEach(function (c) {
+    var tr = el('tr');
+    tr.appendChild(el('td', 'mono', c.id));
+    tr.appendChild(el('td', null, c.real ? 'real fault on ' + c.service : 'noise on ' + c.service));
+    if (c.real) {
+      tr.appendChild(el('td', 'mono ' + (c.incident ? '' : 'badc'), c.incident || 'missed'));
+      tr.appendChild(el('td', 'n', c.incident ? '+' + c.detect_delay + ' min' : ''));
+      tr.appendChild(el('td', 'n', c.alert_delay != null ? '+' + c.alert_delay + ' min' : 'never'));
+      tr.appendChild(el('td', c.cause_correct ? 'okc' : 'badc', c.incident ? c.ranked.replace('/', ' / ') + (c.cause_correct ? ', correct' : ', wrong') : ''));
+    } else {
+      tr.appendChild(el('td', c.incident ? 'badc' : 'okc', c.incident ? 'wrongly promoted' : 'not promoted, correct'));
+      tr.appendChild(el('td', 'n', '')); tr.appendChild(el('td', 'n', c.alert_delay != null ? '+' + c.alert_delay + ' min' : ''));
+      tr.appendChild(el('td', null, 'none expected'));
+    }
+    tb.appendChild(tr);
+  });
+  ck.appendChild(tb);
+  if (D.repeat_link) {
+    var note = el('p', 'lede', 'Repeat link: ' + D.repeat_link.later + ' was matched to ' + D.repeat_link.first + ' at symptom similarity ' + D.repeat_link.similarity.toFixed(2) + '.');
+    note.style.marginTop = '12px'; ck.parentNode.appendChild(note);
+  }
+
+  /* ---------- baseline coverage ---------- */
+  var cov = document.getElementById('cov');
+  D.baselines.forEach(function (b) {
+    var row = el('div', 'covrow'), hd = el('div', 'hd');
+    hd.style.cssText = 'display:flex;justify-content:space-between;gap:8px';
+    hd.appendChild(el('span', 'mono', b.id)); hd.appendChild(el('span', 'lede num', dur(b.duration)));
+    row.appendChild(hd);
+    [['reference', 'ref'], ['trailing', 'trail']].forEach(function (k) {
+      var r = b[k[0]], pct = Math.round(100 * r.covered / b.duration);
+      var line = el('div', 'covbar'), bar = el('div', 'bar'), fill = el('i', k[1]); fill.style.width = pct + '%'; bar.appendChild(fill);
+      line.appendChild(bar); line.appendChild(el('span', null, pct + '% (' + r.covered + '/' + b.duration + ')'));
+      row.appendChild(line);
+    });
+    cov.appendChild(row);
+  });
+
+  /* ---------- rejections ---------- */
+  var topRej = D.rejected_sources[0];
+  document.getElementById('rejlede').textContent = D.counts.rejected + ' clusters of signals were not promoted to incidents. ' +
+    (topRej ? topRej[1] + ' of them come from one series, ' + topRej[0].replace('_', ' ') + ', whose baseline is the smallest in the system.' : '');
+  var rj = document.getElementById('rej');
+  rj.innerHTML = '<thead><tr><th>Raised by</th><th>Clusters</th></tr></thead>';
+  var rb = el('tbody');
+  D.rejected_sources.forEach(function (r) { var tr = el('tr'); tr.appendChild(el('td', 'mono', r[0])); tr.appendChild(el('td', 'n', String(r[1]))); rb.appendChild(tr); });
+  rj.appendChild(rb);
+
+  /* ---------- templates ---------- */
+  var fresh = D.templates.filter(function (t) { return t.new; });
+  document.getElementById('tpllede').textContent = D.inputs.log_lines.toLocaleString('en-US') + ' log lines reduce to ' + D.inputs.templates +
+    ' distinct sentences once IDs and numbers are masked. ' + fresh.length + ' of them never appear in the first 24 hours, and each belongs to a planted fault.';
+  var tp = document.getElementById('tpl');
+  fresh.forEach(function (t) { tp.appendChild(el('div', 'logline', t.text + '   x' + t.count)); });
+
+  /* ---------- boot ---------- */
+  function fromHash() { var h = (location.hash || '').replace('#', '').toUpperCase(); return D.incidents.some(function (i) { return i.id === h; }) ? h : null; }
+  select(fromHash() || (D.incidents[0] && D.incidents[0].id), true);
+  window.addEventListener('hashchange', function () { var h = fromHash(); if (h && h !== selected) select(h, true); });
+  var timer; window.addEventListener('resize', function () { clearTimeout(timer); timer = setTimeout(function () { drawWeek(); chartJobs.forEach(function (f) { f(); }); }, 120); });
+})();
+</script>

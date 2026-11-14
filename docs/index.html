@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{margin:0}[hidden]{display:none!important}</style>
+</head>
+<body>
+<title>IncidentLens</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+/* Layout: an on-call console. Summary first, then the week on one strip,
+   then a list of incidents beside the evidence for the selected one. */
+:root {
+  --bg: #f3f6f8; --surface: #ffffff; --sunk: #e9eef2;
+  --ink: #15202b; --muted: #586675; --line: #d6dee5;
+  --accent: #0e6b75; --accent-soft: #dceef0;
+  --crit: #bf3327; --crit-soft: #f8dcd8;
+  --warn: #9a6410; --warn-soft: #f6e7c8;
+  --ok: #2a7548; --ok-soft: #d9efe1;
+  --display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --body: "Inter", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f151b; --surface: #172029; --sunk: #1e2933;
+    --ink: #e4ebf1; --muted: #94a2b0; --line: #2b3844;
+    --accent: #5cc4cd; --accent-soft: #173538;
+    --crit: #f07f73; --crit-soft: #47211d;
+    --warn: #e2b25c; --warn-soft: #40321a;
+    --ok: #70c796; --ok-soft: #1b3a29;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f151b; --surface: #172029; --sunk: #1e2933;
+  --ink: #e4ebf1; --muted: #94a2b0; --line: #2b3844;
+  --accent: #5cc4cd; --accent-soft: #173538;
+  --crit: #f07f73; --crit-soft: #47211d;
+  --warn: #e2b25c; --warn-soft: #40321a;
+  --ok: #70c796; --ok-soft: #1b3a29;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--body); }
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 28px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 36px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; margin: 0; text-wrap: balance; }
+h1 { font-size: 30px; letter-spacing: -0.01em; }
+h2 { font-size: 20px; }
+h3 { font-size: 15px; }
+p { margin: 0; }
+.lede { color: var(--muted); max-width: 66ch; }
+.mono { font-family: var(--mono); font-size: 13px; }
+.num { font-variant-numeric: tabular-nums; }
+.label { font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+
+header.top { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: baseline; justify-content: space-between; }
+.top .head { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+  background: var(--warn-soft); color: var(--warn); white-space: nowrap; }
+
+.stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.stat { padding: 16px 18px; display: flex; flex-direction: column; gap: 4px; border-left: 1px solid var(--line); min-width: 0; }
+.stat:first-child { border-left: 0; }
+.stat b { font-family: var(--display); font-size: 28px; font-weight: 600; line-height: 1.1; }
+.stat span { color: var(--muted); font-size: 13px; line-height: 1.4; }
+.stat.bad b { color: var(--crit); }
+@media (max-width: 820px) {
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat { border-left: 0; border-top: 1px solid var(--line); }
+  .stat:nth-child(-n+2) { border-top: 0; }
+  .stat:nth-child(even) { border-left: 1px solid var(--line); }
+}
+
+section { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; min-width: 0; }
+svg { display: block; }
+svg text { font-family: var(--body); fill: var(--muted); font-size: 11px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--muted); }
+.legend i { display: inline-block; width: 12px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.legend i.ln { height: 0; border-top: 2px solid; border-radius: 0; vertical-align: 3px; }
+.legend i.dash { height: 0; border-top: 2px dashed; border-radius: 0; vertical-align: 3px; }
+
+.console { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 860px) { .console { grid-template-columns: minmax(0, 1fr); } }
+.inc-list { display: flex; flex-direction: column; gap: 8px; }
+.inc-btn { text-align: left; font: inherit; color: inherit; cursor: pointer; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px; padding: 11px 13px; display: flex; flex-direction: column; gap: 3px; }
+.inc-btn:hover { border-color: var(--accent); }
+.inc-btn:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.inc-btn[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.inc-btn .row { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.inc-btn .id { font-family: var(--mono); font-size: 13px; font-weight: 500; }
+.inc-btn .when { font-size: 12.5px; color: var(--muted); }
+.inc-btn .what { font-size: 13.5px; }
+.pill { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.pill.real { background: var(--ok-soft); color: var(--ok); }
+.pill.false { background: var(--crit-soft); color: var(--crit); }
+.pill.conf-high { background: var(--ok-soft); color: var(--ok); }
+.pill.conf-medium { background: var(--warn-soft); color: var(--warn); }
+.pill.conf-low { background: var(--crit-soft); color: var(--crit); }
+
+.detail { display: flex; flex-direction: column; gap: 20px; }
+.detail .titlerow { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-radius: 5px; background: var(--sunk); }
+.chip.first { background: var(--accent-soft); color: var(--accent); }
+.verdict { border-left: 3px solid var(--accent); padding: 2px 0 2px 14px; display: flex; flex-direction: column; gap: 4px; }
+.verdict .cause { font-family: var(--display); font-size: 18px; font-weight: 600; }
+.charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; }
+@media (max-width: 640px) { .charts { grid-template-columns: minmax(0, 1fr); } }
+.chart { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.chart .cap { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; }
+.chart .cap span:last-child { color: var(--muted); white-space: nowrap; }
+
+.tl { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.tl li { display: grid; grid-template-columns: 62px 88px minmax(0, 1fr); gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13.5px; }
+.tl li:first-child { border-top: 0; }
+.tl .t { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+.tl .s { font-family: var(--mono); font-size: 12.5px; }
+.tl li.alert .e { color: var(--warn); }
+@media (max-width: 520px) { .tl li { grid-template-columns: 52px minmax(0, 1fr); } .tl .s { display: none; } }
+
+.cand { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; border-top: 1px solid var(--line); }
+.cand:first-of-type { border-top: 0; padding-top: 0; }
+.cand .hd { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.cand .hd b { font-weight: 600; }
+.bar { height: 8px; border-radius: 4px; background: var(--sunk); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--muted); border-radius: 4px; }
+.cand.top .bar i { background: var(--accent); }
+.cand ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--muted); }
+.cand ul li { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 6px; }
+.cand ul li span:first-child { font-family: var(--mono); color: var(--ink); }
+.cand .ev { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.logline { font-family: var(--mono); font-size: 12.5px; background: var(--sunk); border-radius: 6px; padding: 8px 10px; overflow-x: auto; white-space: nowrap; }
+
+.tblwrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; padding: 8px 12px 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.n { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.okc { color: var(--ok); font-weight: 600; } .badc { color: var(--crit); font-weight: 600; }
+
+.cov { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 6px 12px; align-items: center; font-size: 13px; }
+.covrow { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; border-top: 1px solid var(--line); }
+.covrow:first-child { border-top: 0; padding-top: 0; }
+.covbar { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.covbar .bar { flex: 1; height: 10px; }
+.covbar .bar i.ref { background: var(--accent); } .covbar .bar i.trail { background: var(--warn); }
+.covbar span { width: 118px; flex: none; font-variant-numeric: tabular-nums; color: var(--muted); }
+
+.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 820px) { .two { grid-template-columns: minmax(0, 1fr); } }
+.steps { margin: 0; padding: 0; list-style: none; counter-reset: s; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 22px; }
+@media (max-width: 820px) { .steps { grid-template-columns: minmax(0, 1fr); } }
+.steps li { counter-increment: s; display: flex; flex-direction: column; gap: 3px; font-size: 13.5px; color: var(--muted); }
+.steps li b { color: var(--ink); font-family: var(--display); font-size: 15px; }
+.steps li b::before { content: counter(s) ". "; color: var(--accent); }
+pre { margin: 0; font-family: var(--mono); font-size: 12.5px; background: var(--sunk); border-radius: 8px; padding: 12px 14px; overflow-x: auto; }
+footer { color: var(--muted); font-size: 13px; display: flex; flex-direction: column; gap: 10px; }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="head">
+      <h1>IncidentLens</h1>
+      <p class="lede">One week of logs, metrics, deploys and alerts from an eight-service system, reduced to the incidents that happened, when each began and what most likely caused it. Every statement links back to the signal behind it.</p>
+    </div>
+    <span class="tag">Synthetic data, planted faults</span>
+  </header>
+
+  <div class="stats" id="stats"></div>
+
+  <section>
+    <h2>The week</h2>
+    <div class="panel">
+      <div id="week"></div>
+      <div class="legend" style="margin-top:10px">
+        <span><i style="background:var(--crit)"></i>incident (select one)</span>
+        <span><i style="background:var(--warn)"></i>alert</span>
+        <span><i style="background:var(--accent)"></i>deploy</span>
+        <span><i style="background:var(--muted)"></i>signal rejected as noise</span>
+        <span><i style="background:var(--sunk);border:1px solid var(--line)"></i>clean reference day</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Incidents</h2>
+    <div class="console">
+      <div class="inc-list" id="list"></div>
+      <div class="panel detail" id="detail"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Checked against the planted answers</h2>
+    <p class="lede">The generator records what it planted. The pipeline never reads that record; it is only used here, to mark the results.</p>
+    <div class="panel tblwrap"><table id="checks"></table></div>
+  </section>
+
+  <div class="two">
+    <section>
+      <h2>Two definitions of normal</h2>
+      <p class="lede">Share of each fault's minutes that stay flagged. Both baselines notice every fault; they differ on how long they hold on to the slow one.</p>
+      <div class="panel">
+        <div id="cov"></div>
+        <div class="legend" style="margin-top:12px">
+          <span><i style="background:var(--accent)"></i>fixed baseline from the clean first day</span>
+          <span><i style="background:var(--warn)"></i>trailing six-hour baseline</span>
+        </div>
+      </div>
+    </section>
+    <section>
+      <h2>What was rejected</h2>
+      <p class="lede" id="rejlede"></p>
+      <div class="panel tblwrap"><table id="rej"></table></div>
+    </section>
+  </div>
+
+  <section>
+    <h2>Log lines never seen on the clean day</h2>
+    <p class="lede" id="tpllede"></p>
+    <div class="panel" id="tpl" style="display:flex;flex-direction:column;gap:8px"></div>
+  </section>
+
+  <section>
+    <h2>How it works</h2>
+    <div class="panel">
+      <ol class="steps">
+        <li><b>Ingest</b>Four file formats are read onto one minute-by-minute timeline.</li>
+        <li><b>Template the logs</b>IDs and numbers are masked so identical sentences collapse together.</li>
+        <li><b>Score against normal</b>A robust z-score from the median and MAD, after removing the day and night cycle.</li>
+        <li><b>Group into incidents</b>Signals join when they are close in time and connected in the dependency graph.</li>
+        <li><b>Rank the causes</b>Deploys and services are scored, and the arithmetic is shown for each.</li>
+        <li><b>Match earlier incidents</b>Symptom sets are compared so a repeat points back to its first occurrence.</li>
+      </ol>
+    </div>
+  </section>
+
+  <footer>
+    <p>This page is generated by <span class="mono">build_site.py</span> from the same pipeline as <span class="mono">run_demo.py</span>. All data is synthetic.</p>
+    <pre>py scripts/make_sample_data.py
+py run_demo.py
+py build_site.py</pre>
+  </footer>
+</div>
+
+<script type="application/json" id="payload">{"start":"2026-10-05T00:00:00","minutes":10080,"reference_hours":24,"inputs":{"metric_points":322560,"log_lines":135559,"deploys":13,"alerts":12,"services":8,"templates":20},"counts":{"metric_anomalies":46,"log_anomalies":4,"incidents":5,"rejected":33,"real_planted":4,"real_found":4,"false_incidents":1},"dependencies":{"gateway":["auth","orders","search"],"orders":["payments","inventory","notify"],"payments":["db-proxy"],"inventory":["db-proxy"],"search":["db-proxy"],"auth":["db-proxy"],"notify":[],"db-proxy":[]},"incidents":[{"id":"INC-001","start":3480,"end":3521,"services":["gateway","orders","payments"],"first_service":"payments","first_signal":"error_rate","severity":"high","planted":"bad-deploy-1","planted_start":3480,"alerts":[{"minute":3486,"rule":"error_rate_above_5pct","severity":"critical"}],"timeline":[{"minute":3480,"service":"payments","event":"error_rate on payments departed baseline (z=252.75)","kind":"metric"},{"minute":3480,"service":"payments","event":"log new_template:17 on payments, peak 18 lines/min","kind":"log"},{"minute":3481,"service":"orders","event":"error_rate on orders departed baseline (z=27.88)","kind":"metric"},{"minute":3482,"service":"gateway","event":"error_rate on gateway departed baseline (z=20.24)","kind":"metric"},{"minute":3483,"service":"payments","event":"latency_ms on payments departed baseline (z=10.99)","kind":"metric"},{"minute":3486,"service":"payments","event":"alert fired: error_rate_above_5pct (critical)","kind":"alert"}],"causes":[{"label":"deploy v2.4.0 to payments","type":"deploy","service":"payments","score":90,"confidence":"medium","components":[["landed 3 min before onset",50],["deployed the service that failed first",40]],"evidence":["deploy v2.4.0 to payments by r.lindqvist at 2026-10-07 09:57 (\"retry payment confirmations more aggressively\")"]},{"label":"fault inside payments","type":"service","service":"payments","score":80,"confidence":null,"components":[["showed the first anomaly",35],["upstream of 2 of 2 other affected services",25],["its own signals are severe or sustained",10],["share of the largest departure seen",10]],"evidence":["first anomalous signal of the incident: error_rate on payments at minute 3480","payments is called (directly or transitively) by gateway, orders","error_rate on payments peaked at z=252.75 (minute 3507)"]},{"label":"fault inside orders","type":"service","service":"orders","score":23,"confidence":null,"components":[["upstream of 1 of 2 other affected services",12],["its own signals are severe or sustained",10],["share of the largest departure seen",1]],"evidence":["orders is called (directly or transitively) by gateway","error_rate on orders peaked at z=27.88 (minute 3502)"]},{"label":"fault inside gateway","type":"service","service":"gateway","score":11,"confidence":null,"components":[["its own signals are severe or sustained",10],["share of the largest departure seen",1]],"evidence":["error_rate on gateway peaked at z=20.24 (minute 3486)"]}],"similar":[],"charts":[{"service":"payments","metric":"error_rate","from":3390,"peak_z":252.8,"runs":[[3480,3521]],"values":[0.0064,0.0063,0.0056,0.0058,0.006,0.0068,0.0061,0.0066,0.0064,0.0067,0.0069,0.0062,0.0066,0.0066,0.0063,0.0063,0.0069,0.0057,0.0066,0.0065,0.0063,0.0061,0.0061,0.0064,0.0071,0.007,0.0059,0.006,0.0059,0.0064,0.0066,0.0065,0.0061,0.0062,0.0061,0.0059,0.0058,0.0065,0.0063,0.0065,0.0063,0.0063,0.0066,0.0058,0.0073,0.0061,0.0061,0.006,0.0063,0.0062,0.0062,0.0055,0.0064,0.0067,0.006,0.0063,0.0057,0.006,0.0059,0.0065,0.0065,0.0072,0.0063,0.0062,0.0065,0.0064,0.0059,0.0064,0.0063,0.0063,0.006,0.0059,0.0063,0.0062,0.0071,0.0063,0.0065,0.006,0.0063,0.0063,0.0063,0.0058,0.0066,0.0063,0.0063,0.0061,0.0068,0.0061,0.006,0.0058,0.0211,0.0346,0.0479,0.0634,0.0765,0.0764,0.0812,0.0743,0.0697,0.0785,0.0766,0.0744,0.0734,0.0789,0.0714,0.0743,0.0793,0.0791,0.0698,0.0741,0.077,0.0749,0.0735,0.0704,0.0752,0.0728,0.0807,0.0818,0.0709,0.0691,0.0718,0.0708,0.0813,0.0734,0.0721,0.0759,0.0749,0.0791,0.0814,0.0784,0.0678,0.0795,0.0064,0.0066,0.0055,0.0062,0.0069,0.0063,0.0058,0.0059,0.0064,0.0059,0.0065,0.0061,0.0067,0.0057,0.0058,0.0067,0.0065,0.0062,0.007,0.0069,0.006,0.0067,0.0066,0.0062,0.0063,0.0064,0.0064,0.0058,0.006,0.0059,0.0068,0.0061,0.0059,0.0066,0.0057,0.0064,0.0059,0.0065,0.0065,0.0062,0.0062,0.0062,0.0057,0.0062,0.0064,0.0064,0.0063,0.0059,0.0071,0.0066,0.0061,0.0062,0.0062,0.0058,0.0063,0.0061,0.0066,0.0062,0.0063,0.0061]},{"service":"orders","metric":"error_rate","from":3390,"peak_z":27.9,"runs":[[3481,3521]],"values":[0.0073,0.0078,0.0078,0.0078,0.0074,0.0081,0.0074,0.008,0.0078,0.0076,0.0069,0.0067,0.0082,0.0086,0.0066,0.0077,0.0077,0.0062,0.0066,0.0077,0.0073,0.008,0.0079,0.008,0.0076,0.0072,0.0068,0.008,0.0073,0.0081,0.0077,0.0078,0.0074,0.0069,0.0079,0.0071,0.0075,0.0076,0.0082,0.0077,0.0084,0.0079,0.0075,0.0068,0.0083,0.0073,0.0071,0.0076,0.0081,0.0069,0.0073,0.0081,0.0072,0.0076,0.0069,0.007,0.0073,0.0079,0.0075,0.0078,0.0074,0.0075,0.007,0.0073,0.0079,0.0074,0.0078,0.0081,0.0081,0.0071,0.0074,0.008,0.0071,0.0077,0.0077,0.0081,0.0085,0.0072,0.0069,0.0074,0.0071,0.007,0.0073,0.0076,0.0077,0.0076,0.0074,0.0079,0.0077,0.0068,0.0098,0.0108,0.0139,0.0153,0.0178,0.0168,0.0194,0.0193,0.0178,0.0164,0.0177,0.0169,0.0172,0.019,0.0181,0.0167,0.0185,0.0174,0.0167,0.018,0.0167,0.0187,0.0199,0.0177,0.0196,0.017,0.0157,0.0176,0.0181,0.0171,0.0182,0.019,0.0183,0.0172,0.0167,0.0181,0.0174,0.0167,0.0181,0.0173,0.0185,0.0182,0.0076,0.0073,0.0073,0.0073,0.007,0.008,0.0065,0.0081,0.0075,0.008,0.0076,0.007,0.0074,0.008,0.0072,0.0066,0.0073,0.0077,0.0075,0.0075,0.0072,0.0072,0.0082,0.0074,0.0075,0.0077,0.008,0.0071,0.0072,0.0079,0.0079,0.0083,0.0071,0.0069,0.0083,0.0073,0.0075,0.0071,0.0076,0.0075,0.0074,0.0077,0.0081,0.007,0.0079,0.007,0.0071,0.0068,0.0079,0.0072,0.0072,0.0081,0.0085,0.0084,0.0074,0.007,0.0073,0.0077,0.0076,0.0079]},{"service":"gateway","metric":"error_rate","from":3390,"peak_z":20.2,"runs":[[3482,3521]],"values":[0.0049,0.0051,0.0052,0.0046,0.0047,0.0049,0.0049,0.0054,0.0053,0.0047,0.005,0.0055,0.0048,0.0052,0.0057,0.0046,0.0047,0.0056,0.0047,0.0051,0.0049,0.0046,0.0053,0.005,0.005,0.0053,0.0048,0.0057,0.0046,0.005,0.0052,0.0045,0.005,0.005,0.0055,0.005,0.0051,0.005,0.0047,0.0048,0.0049,0.0054,0.0053,0.0053,0.0052,0.0051,0.0044,0.0046,0.0049,0.005,0.0052,0.0044,0.0047,0.0049,0.005,0.0049,0.0052,0.0053,0.0045,0.0053,0.0046,0.0054,0.0049,0.005,0.005,0.0047,0.0048,0.0054,0.0046,0.0052,0.0053,0.0052,0.0048,0.0048,0.0049,0.0055,0.0052,0.0052,0.0052,0.0047,0.0054,0.0048,0.0047,0.0053,0.0053,0.0056,0.005,0.0051,0.0044,0.0051,0.006,0.0063,0.0073,0.0085,0.0103,0.0097,0.011,0.0102,0.0093,0.0095,0.0086,0.0095,0.0092,0.0096,0.0091,0.0106,0.0089,0.009,0.0094,0.0095,0.0098,0.0093,0.0102,0.0098,0.0094,0.0091,0.0094,0.0099,0.0093,0.0078,0.0092,0.0106,0.0094,0.009,0.01,0.0092,0.0093,0.0082,0.009,0.0092,0.0102,0.0092,0.005,0.0049,0.005,0.0047,0.005,0.0051,0.0051,0.0049,0.0051,0.0052,0.0047,0.005,0.0052,0.0054,0.0049,0.0054,0.0056,0.005,0.0049,0.0049,0.0051,0.0051,0.005,0.0057,0.005,0.005,0.0054,0.0049,0.0058,0.0055,0.0049,0.0046,0.0051,0.0052,0.0052,0.0053,0.0043,0.0046,0.0048,0.005,0.0054,0.0056,0.0043,0.0047,0.0051,0.0044,0.005,0.0048,0.0043,0.005,0.0045,0.0048,0.0054,0.0052,0.005,0.0051,0.0045,0.0051,0.0051,0.0048]},{"service":"payments","metric":"latency_ms","from":3390,"peak_z":11.0,"runs":[[3483,3521]],"values":[118.6,112.7,113.3,116.0,128.1,124.1,115.9,127.7,117.9,110.5,115.2,122.6,125.0,134.6,119.7,129.1,127.2,121.1,118.3,123.9,123.4,124.3,119.3,121.5,115.3,123.2,130.3,112.7,117.9,104.8,118.6,119.7,127.2,118.3,122.3,119.4,116.0,97.71,118.4,130.1,113.9,130.7,124.2,112.2,108.4,117.0,124.4,113.0,123.2,136.0,113.6,105.1,113.5,120.6,114.4,121.6,120.5,118.3,114.0,118.8,117.7,122.8,121.9,115.3,116.3,119.5,123.8,104.8,109.5,120.0,125.3,111.6,108.1,119.5,115.1,128.4,125.1,128.0,121.2,123.1,115.5,118.7,119.9,117.4,115.5,108.1,110.3,125.5,120.7,126.7,127.3,146.0,148.5,163.9,171.7,180.7,188.5,173.9,165.7,185.0,182.5,176.7,175.0,172.1,182.8,174.4,185.5,177.5,178.4,168.2,171.8,172.3,177.9,173.4,176.5,179.7,180.7,190.4,175.0,169.6,182.5,170.9,190.6,176.9,193.0,191.9,191.8,184.0,167.7,165.8,157.5,172.3,104.6,120.4,108.2,116.5,115.3,121.6,119.5,123.6,118.9,118.5,104.6,124.6,113.2,116.8,114.1,116.3,112.1,125.9,125.7,119.3,109.3,119.7,105.5,115.1,116.8,118.7,117.1,123.0,109.7,124.8,126.4,116.4,120.9,112.3,111.0,123.9,130.3,133.2,104.2,111.6,113.9,116.8,114.3,127.5,125.4,115.6,118.9,116.6,107.5,103.3,106.1,114.7,127.5,119.5,128.8,132.2,118.0,122.1,109.5,120.8]}],"deploys":[{"minute":3477,"label":"v2.4.0 to payments"}],"new_lines":[{"service":"payments","text":"payment gateway timeout after <NUM>ms req=<HEX> retry=<NUM>","first":3480,"peak":18}]},{"id":"INC-002","start":4874,"end":5159,"services":["search"],"first_service":"search","first_signal":"memory_pct","severity":"high","planted":"memory-leak","planted_start":4800,"alerts":[{"minute":5088,"rule":"memory_above_90pct","severity":"warning"}],"timeline":[{"minute":4874,"service":"search","event":"memory_pct on search departed baseline (z=24.47)","kind":"metric"},{"minute":4984,"service":"search","event":"log new_template:18 on search, peak 19 lines/min","kind":"log"},{"minute":5057,"service":"search","event":"latency_ms on search departed baseline (z=31.8)","kind":"metric"},{"minute":5088,"service":"search","event":"alert fired: memory_above_90pct (warning)","kind":"alert"}],"causes":[{"label":"fault inside search","type":"service","service":"search","score":55,"confidence":"medium","components":[["showed the first anomaly",35],["its own signals are severe or sustained",10],["share of the largest departure seen",10]],"evidence":["first anomalous signal of the incident: memory_pct on search at minute 4874","latency_ms on search peaked at z=31.8 (minute 5147)"]}],"similar":[],"charts":[{"service":"search","metric":"memory_pct","from":4770,"peak_z":24.5,"runs":[[4874,5159]],"values":[42.75,38.42,40.54,40.88,42.03,38.82,40.48,44.08,42.16,40.46,37.17,41.67,44.67,38.15,42.56,39.0,39.53,39.04,40.26,38.29,42.43,36.88,37.77,41.64,38.01,39.59,40.03,38.21,38.24,38.88,41.93,37.91,43.36,38.24,38.65,42.12,41.45,43.37,40.15,44.45,38.15,40.55,43.83,44.81,45.38,41.17,40.3,38.3,43.1,42.86,43.05,44.64,42.08,44.87,44.14,44.23,42.47,37.92,45.85,41.22,40.13,39.63,45.06,49.07,45.58,45.36,42.84,44.48,46.46,44.91,45.13,50.47,44.6,52.32,44.84,41.95,45.84,49.18,46.41,45.6,46.69,53.24,46.14,48.74,47.62,46.84,44.83,50.38,48.04,49.06,46.28,47.64,45.76,47.8,53.38,46.66,42.96,50.41,46.93,49.83,41.51,45.05,51.43,53.33,56.92,51.21,48.04,54.01,51.17,54.38,49.23,57.86,55.06,50.22,52.58,57.02,54.28,56.91,54.84,54.57,49.7,51.63,54.42,56.56,58.24,56.47,57.8,57.57,58.24,56.24,50.44,55.53,52.72,55.82,55.01,51.84,56.14,56.91,58.43,54.69,62.23,53.78,50.29,56.02,52.54,55.79,49.76,51.42,63.08,52.83,55.45,62.09,54.66,58.44,61.67,58.62,54.13,59.37,59.41,65.92,58.7,63.06,58.43,54.27,55.63,64.49,62.74,59.33,57.24,60.8,63.22,68.78,65.78,63.69,58.67,63.48,61.15,64.73,64.97,64.12,61.57,60.36,67.75,61.98,66.84,61.92,64.47,65.84,66.55,66.37,64.5,65.2,67.02,63.54,68.26,63.28,63.85,69.62,76.97,69.02,61.14,70.23,65.26,75.17,59.75,66.79,70.67,68.77,66.11,70.09,72.78,69.15,67.05,66.28,66.72,68.66,69.35,67.73,72.93,72.34,70.47,68.59,72.58,67.27,65.55,72.64,71.94,66.98,64.28,68.59,68.86,76.42,68.58,71.33,73.02,74.86,72.43,75.98,71.63,67.12,67.62,73.17,72.09,72.63,77.23,74.44,74.23,75.96,77.19,78.71,68.58,72.08,77.34,74.45,69.71,80.54,69.52,77.68,68.59,70.66,73.86,75.97,76.5,79.15,77.52,73.5,78.09,73.57,74.59,63.41,76.99,83.6,77.42,74.68,72.03,74.51,74.89,73.95,72.01,76.68,83.41,79.16,77.33,75.09,83.26,79.47,82.24,79.47,73.87,77.3,82.92,82.11,77.74,83.13,79.37,79.16,76.99,85.16,76.37,86.63,81.92,86.06,78.23,84.07,81.04,78.62,85.95,84.38,74.59,82.34,76.53,80.68,82.44,86.24,90.33,85.32,80.32,82.66,77.85,86.65,86.4,81.91,90.01,85.45,83.49,76.4,96.69,86.87,88.04,79.31,88.25,84.16,90.65,92.05,85.49,90.81,92.31,76.8,79.31,84.79,72.62,80.32,93.08,79.58,78.83,90.04,83.71,91.07,94.65,90.85,89.49,76.67,84.65,79.86,79.64,77.72,97.32,95.36,98.09,93.86,94.64,94.37,92.26,85.48,86.13,99.46,86.69,85.34,93.93,91.88,93.04,87.98,96.85,91.51,85.04,89.52,96.35,89.82,91.57,94.2,93.83,93.82,95.22,89.29,91.45,99.5,91.28,89.24,87.75,97.55,41.29,39.08,40.54,42.77,41.62,40.74,38.39,40.75,39.44,37.15,37.5,41.86,41.01,37.59,38.48,39.33,42.46,42.33,40.37,38.7,41.88,40.97,37.91,36.63,41.15,42.68,38.78,42.5,40.27,37.98,45.47,35.48,40.75,39.64,39.73,40.51,43.29,37.14,39.24,41.89,40.42,38.82,41.37,36.24,41.98,45.89,40.8,38.34,41.13,35.5,41.03,39.68,38.24,37.39,37.96,40.69,41.49,37.44,41.67,44.06]},{"service":"search","metric":"latency_ms","from":4770,"peak_z":31.8,"runs":[[5057,5159]],"values":[104.1,118.4,121.6,115.2,130.5,121.1,125.9,117.6,126.2,128.1,120.5,121.6,112.5,119.6,115.1,120.8,127.8,118.3,133.3,122.3,121.5,111.3,121.4,119.5,127.4,111.6,126.3,110.2,115.5,110.7,143.4,145.2,163.7,156.2,140.0,142.9,146.4,140.5,140.6,145.6,167.7,135.4,150.6,150.3,155.6,146.4,144.1,172.1,146.4,135.3,145.3,155.5,154.6,164.2,141.1,133.3,139.1,143.3,157.4,143.8,150.1,141.4,150.9,159.0,131.7,137.5,148.4,157.7,165.5,151.4,155.5,145.8,150.3,150.0,146.3,150.2,149.9,152.5,147.5,162.3,150.7,161.9,165.2,137.7,159.9,146.5,145.6,161.3,137.9,141.2,151.7,167.4,131.6,160.6,160.6,155.4,149.7,142.6,148.5,149.2,165.7,155.8,158.2,144.0,155.9,147.4,148.0,149.4,144.8,154.3,153.6,144.7,153.6,147.8,147.7,173.4,149.7,159.4,128.2,137.9,150.6,135.2,142.2,156.2,150.2,154.6,147.2,161.0,141.7,149.7,157.1,132.0,167.9,145.9,149.4,148.3,147.5,139.3,152.0,155.7,145.9,152.9,157.4,141.0,149.6,162.3,150.4,129.6,143.7,150.8,147.8,161.0,135.8,155.6,168.7,144.6,138.5,151.9,169.4,150.2,156.7,140.5,139.0,151.1,130.5,120.9,157.8,147.9,153.8,140.0,151.3,149.2,142.6,153.1,160.7,151.6,146.6,154.6,161.3,142.4,162.4,150.3,147.5,150.1,143.1,148.9,150.7,142.3,157.2,138.5,163.8,150.3,158.4,159.4,133.4,154.1,142.4,154.5,145.6,170.7,141.5,128.1,148.2,154.8,137.9,147.5,149.8,156.4,143.1,162.5,143.0,146.1,155.3,146.8,144.5,139.1,159.5,147.8,167.7,137.5,142.8,141.9,137.9,142.2,153.6,151.5,159.9,145.0,141.7,159.2,148.0,145.7,135.7,137.1,138.9,138.5,141.1,139.5,156.3,137.2,174.5,144.1,147.8,145.9,156.5,155.8,140.0,144.1,163.3,143.9,135.4,146.3,146.3,150.6,144.4,145.6,146.0,150.9,144.8,140.4,142.8,140.5,146.4,148.8,155.1,136.5,140.6,143.0,162.0,150.0,140.1,151.3,160.5,138.1,170.1,183.4,173.6,179.2,176.5,164.5,163.0,181.1,192.0,182.3,191.5,195.2,197.1,203.8,203.6,187.1,207.9,191.2,217.9,197.2,207.3,216.1,197.0,187.0,210.5,208.2,195.6,235.9,205.4,244.3,239.0,246.7,219.6,223.3,231.9,249.3,239.4,231.1,232.7,246.0,251.0,243.4,237.2,231.9,276.2,257.0,239.7,281.5,271.9,265.8,275.9,294.4,250.1,285.3,262.6,284.2,300.8,282.6,291.9,272.4,290.2,276.1,316.5,263.5,350.7,323.7,315.5,296.0,325.4,333.1,332.6,351.6,314.7,302.5,336.7,339.3,316.4,323.8,333.0,340.7,327.5,364.0,332.4,353.5,351.6,358.9,374.1,362.1,419.6,370.5,398.1,348.0,341.9,377.8,326.6,381.3,327.0,391.0,343.6,385.7,393.1,405.5,408.6,444.2,379.3,383.3,393.9,397.6,413.3,339.8,431.6,411.9,381.9,434.8,387.6,402.4,144.2,154.1,138.9,153.4,155.4,140.4,153.8,150.8,159.2,148.7,168.2,150.2,148.8,148.2,154.3,145.9,158.1,153.6,162.2,156.5,149.6,151.3,139.1,166.4,138.4,153.1,132.1,145.0,150.6,142.9,147.6,146.6,141.9,148.5,149.4,157.8,145.2,145.0,152.7,157.1,151.4,151.1,142.4,149.9,146.9,155.6,155.2,149.5,142.9,160.3,151.9,158.0,157.2,160.7,148.6,147.7,150.5,151.8,164.7,155.0]}],"deploys":[],"new_lines":[{"service":"search","text":"allocation slow: heap <NUM>% used, gc pause <NUM>ms","first":4984,"peak":19}]},{"id":"INC-003","start":8040,"end":8094,"services":["auth","db-proxy","inventory","payments","search"],"first_service":"db-proxy","first_signal":"latency_ms","severity":"high","planted":"db-slowdown","planted_start":8040,"alerts":[{"minute":8044,"rule":"latency_p99_above_slo","severity":"critical"}],"timeline":[{"minute":8040,"service":"db-proxy","event":"latency_ms on db-proxy departed baseline (z=96.57)","kind":"metric"},{"minute":8040,"service":"db-proxy","event":"log new_template:19 on db-proxy, peak 19 lines/min","kind":"log"},{"minute":8042,"service":"inventory","event":"latency_ms on inventory departed baseline (z=34.13)","kind":"metric"},{"minute":8043,"service":"auth","event":"latency_ms on auth departed baseline (z=32.62)","kind":"metric"},{"minute":8043,"service":"db-proxy","event":"cpu_pct on db-proxy departed baseline (z=10.54)","kind":"metric"},{"minute":8043,"service":"payments","event":"latency_ms on payments departed baseline (z=33.71)","kind":"metric"},{"minute":8043,"service":"search","event":"latency_ms on search departed baseline (z=32.58)","kind":"metric"},{"minute":8044,"service":"db-proxy","event":"alert fired: latency_p99_above_slo (critical)","kind":"alert"},{"minute":8066,"service":"db-proxy","event":"cpu_pct on db-proxy departed baseline (z=9.23)","kind":"metric"}],"causes":[{"label":"fault inside db-proxy","type":"service","service":"db-proxy","score":80,"confidence":"high","components":[["showed the first anomaly",35],["upstream of 4 of 4 other affected services",25],["its own signals are severe or sustained",10],["share of the largest departure seen",10]],"evidence":["first anomalous signal of the incident: latency_ms on db-proxy at minute 8040","db-proxy is called (directly or transitively) by auth, inventory, payments, search","latency_ms on db-proxy peaked at z=96.57 (minute 8046)"]},{"label":"fault inside inventory","type":"service","service":"inventory","score":14,"confidence":null,"components":[["its own signals are severe or sustained",10],["share of the largest departure seen",4]],"evidence":["latency_ms on inventory peaked at z=34.13 (minute 8091)"]},{"label":"fault inside auth","type":"service","service":"auth","score":13,"confidence":null,"components":[["its own signals are severe or sustained",10],["share of the largest departure seen",3]],"evidence":["latency_ms on auth peaked at z=32.62 (minute 8049)"]},{"label":"fault inside payments","type":"service","service":"payments","score":13,"confidence":null,"components":[["its own signals are severe or sustained",10],["share of the largest departure seen",3]],"evidence":["latency_ms on payments peaked at z=33.71 (minute 8081)"]},{"label":"fault inside search","type":"service","service":"search","score":13,"confidence":null,"components":[["its own signals are severe or sustained",10],["share of the largest departure seen",3]],"evidence":["latency_ms on search peaked at z=32.58 (minute 8047)"]}],"similar":[],"charts":[{"service":"db-proxy","metric":"latency_ms","from":7950,"peak_z":96.6,"runs":[[8040,8094]],"values":[22.0,21.61,21.89,23.98,22.41,20.88,21.41,24.84,22.52,22.45,24.45,23.83,21.26,23.13,19.64,22.31,21.05,20.13,20.89,20.24,19.06,23.7,24.64,23.04,24.21,21.95,23.39,24.28,21.56,23.49,23.13,22.83,21.2,22.36,26.03,21.81,23.45,21.49,21.43,22.14,20.25,23.17,20.74,22.83,22.11,22.01,23.62,22.38,23.03,22.01,23.11,24.24,23.64,22.42,20.37,23.45,21.45,22.23,20.58,22.4,22.5,21.64,21.73,25.04,21.14,23.1,22.66,22.81,22.66,23.64,23.91,20.17,24.92,23.3,20.63,21.41,22.6,23.61,22.11,18.83,21.5,20.89,21.57,22.68,20.11,21.72,22.34,20.88,20.74,22.21,52.34,78.33,109.0,122.9,133.0,139.5,148.6,132.6,134.9,122.7,124.7,143.9,131.3,127.6,135.2,146.0,133.1,140.8,135.9,133.5,136.2,131.0,135.7,140.7,139.4,140.2,140.7,127.3,136.7,140.5,148.6,134.0,139.8,143.6,131.2,145.1,143.6,134.6,133.9,117.7,135.6,143.1,128.2,134.7,127.5,131.1,123.2,130.4,138.6,132.6,136.2,135.1,136.7,143.2,129.1,20.92,21.98,22.83,24.09,22.84,23.93,22.42,23.44,22.06,23.3,23.44,20.72,25.17,22.39,21.4,24.54,22.55,20.75,22.92,20.73,21.66,22.28,22.4,22.82,22.43,19.69,21.63,23.64,22.46,23.68,20.86,23.06,22.44,22.6,23.33,21.32,22.39,25.03,19.67,21.66,23.93,21.31,22.05,23.08,22.14,23.96,22.44,23.69,22.37,23.73,22.87,22.79,23.25,22.82,22.75,22.48,20.11,22.36,22.64,24.87]},{"service":"inventory","metric":"latency_ms","from":7950,"peak_z":34.1,"runs":[[8042,8094]],"values":[78.22,71.15,82.56,82.01,78.15,73.59,76.21,83.3,78.76,64.39,75.18,74.53,77.67,65.02,78.46,71.51,75.48,74.48,74.53,72.69,79.68,75.18,68.12,64.84,67.44,78.54,81.94,75.02,80.89,72.96,65.65,73.54,69.58,76.97,80.6,75.46,69.48,78.29,76.98,74.74,79.03,73.43,77.48,88.39,68.81,76.02,69.29,77.28,77.18,75.14,78.39,73.79,69.6,75.53,72.98,83.68,70.67,72.2,72.76,66.63,71.21,78.08,79.35,70.68,76.25,75.45,74.96,79.74,75.57,72.49,80.29,69.88,81.16,75.6,76.05,74.88,67.25,80.17,72.74,81.02,67.24,77.95,67.74,73.58,81.33,73.08,78.33,78.84,69.53,86.33,71.37,75.09,103.1,154.7,149.9,188.5,198.2,196.3,194.1,186.8,195.4,202.7,184.3,209.3,186.5,170.7,181.2,200.6,193.9,196.3,186.7,193.5,204.5,195.1,186.3,189.9,189.8,198.7,204.6,193.4,216.1,171.5,186.8,197.7,201.3,186.6,197.1,200.2,197.4,198.2,196.7,202.6,188.4,206.2,197.5,197.3,218.9,186.4,184.3,204.0,202.4,223.7,183.9,176.4,186.1,71.2,63.47,74.41,67.91,66.77,79.22,76.18,78.96,75.33,68.78,85.26,74.52,76.91,82.88,81.59,75.2,81.42,72.33,75.46,73.96,73.27,68.45,72.62,84.41,71.68,71.72,67.69,76.78,74.58,79.53,75.24,79.31,77.33,79.75,75.74,73.94,78.43,70.54,71.48,65.85,72.94,69.02,72.96,70.79,69.64,69.78,76.57,75.57,76.92,78.72,73.73,63.4,74.51,73.69,76.24,86.1,74.84,79.32,72.55,87.4]},{"service":"auth","metric":"latency_ms","from":7950,"peak_z":32.6,"runs":[[8043,8094]],"values":[33.98,35.08,34.34,37.88,32.89,32.8,36.75,32.82,34.47,36.32,37.36,36.85,37.53,35.01,33.67,30.97,33.88,36.14,34.35,35.52,38.13,36.49,34.32,35.52,35.8,34.87,32.02,35.13,33.58,31.91,33.56,35.58,33.54,34.7,31.94,35.0,32.79,36.89,34.32,34.02,35.87,33.7,37.48,33.69,34.95,32.61,37.4,35.54,35.21,33.36,39.58,35.66,37.08,32.64,35.59,37.47,38.02,30.13,36.5,36.29,32.93,38.72,35.82,35.27,34.41,33.09,38.97,36.17,34.33,33.92,36.35,35.82,29.49,32.58,31.85,35.39,33.76,34.08,35.71,31.11,40.73,31.61,35.47,36.4,35.66,32.13,33.13,33.22,34.46,34.16,33.91,31.8,47.55,62.2,72.04,98.08,84.4,88.59,91.1,103.8,90.93,86.97,99.89,87.95,99.42,96.41,87.95,83.77,100.3,94.86,81.24,97.33,99.81,90.12,90.86,89.61,95.11,91.98,87.49,99.07,102.6,96.4,84.74,94.54,96.24,90.58,94.97,100.4,94.7,86.37,93.83,89.01,95.94,89.33,93.4,94.48,79.52,86.43,90.86,92.2,90.22,86.14,95.87,83.82,94.29,35.88,34.1,33.67,36.71,33.37,33.35,36.8,34.57,33.45,37.28,37.65,36.39,34.51,33.9,30.32,41.33,32.35,32.86,38.33,37.28,33.95,37.37,32.98,34.21,34.44,35.24,36.07,35.04,35.53,34.11,33.37,38.9,32.47,36.71,34.24,36.14,35.48,39.14,32.09,33.11,36.03,33.62,35.85,33.14,36.43,33.94,36.76,32.0,34.35,34.28,34.46,35.33,38.03,31.93,34.58,35.92,36.46,33.52,32.8,36.99]},{"service":"db-proxy","metric":"cpu_pct","from":7950,"peak_z":10.5,"runs":[[8043,8060],[8066,8093]],"values":[50.41,54.27,56.63,50.31,55.83,54.47,55.63,54.76,54.6,51.05,50.93,52.0,52.15,50.7,50.29,54.76,51.18,49.77,51.26,59.0,45.61,58.37,51.28,53.97,48.42,53.45,55.11,52.85,55.22,54.8,50.47,57.92,55.62,41.74,50.84,57.41,43.49,47.25,58.36,52.77,56.04,51.02,53.18,52.56,49.36,49.96,51.08,56.31,54.06,55.54,51.72,54.23,52.62,52.53,54.31,50.44,48.69,52.49,48.93,52.87,50.88,45.56,55.17,56.0,59.88,49.99,52.45,52.49,53.01,51.35,62.68,55.18,54.75,54.68,53.38,54.1,50.78,52.92,49.15,54.81,51.01,57.77,52.2,50.75,52.06,59.69,56.09,49.41,51.81,57.25,57.31,64.94,66.83,71.6,68.88,80.68,78.64,69.25,81.24,78.82,74.89,65.22,80.24,74.35,68.84,79.86,74.59,86.46,64.96,73.61,72.05,70.4,68.08,65.2,70.74,69.49,75.35,66.04,67.96,79.51,71.2,72.04,72.29,82.13,72.18,74.58,70.52,73.96,78.67,73.46,66.3,72.95,76.04,67.33,74.19,74.01,69.43,76.28,79.49,77.11,69.38,72.79,71.08,77.92,71.02,51.62,46.32,52.29,53.07,54.3,53.2,56.36,52.46,52.14,53.71,54.29,54.04,45.31,53.62,53.65,50.63,51.53,57.86,55.95,57.99,54.71,48.38,52.28,53.23,60.73,53.02,54.72,56.9,54.74,51.6,51.44,58.91,55.23,49.14,52.15,50.66,56.41,53.36,57.59,54.93,52.97,54.65,49.71,52.09,55.78,58.8,56.89,48.56,56.36,53.51,57.59,51.37,51.68,52.99,48.72,47.13,53.57,54.25,58.74,57.75]}],"deploys":[],"new_lines":[{"service":"db-proxy","text":"connection pool exhausted, waited <NUM>ms for a slot","first":8040,"peak":19}]},{"id":"INC-004","start":9630,"end":9667,"services":["gateway","orders","payments"],"first_service":"payments","first_signal":"error_rate","severity":"high","planted":"bad-deploy-2","planted_start":9630,"alerts":[{"minute":9636,"rule":"error_rate_above_5pct","severity":"critical"}],"timeline":[{"minute":9630,"service":"payments","event":"error_rate on payments departed baseline (z=259.68)","kind":"metric"},{"minute":9630,"service":"payments","event":"log new_template:17 on payments, peak 19 lines/min","kind":"log"},{"minute":9631,"service":"orders","event":"error_rate on orders departed baseline (z=27.27)","kind":"metric"},{"minute":9632,"service":"gateway","event":"error_rate on gateway departed baseline (z=19.22)","kind":"metric"},{"minute":9632,"service":"payments","event":"latency_ms on payments departed baseline (z=11.54)","kind":"metric"},{"minute":9636,"service":"payments","event":"alert fired: error_rate_above_5pct (critical)","kind":"alert"}],"causes":[{"label":"deploy v6.4.0 to payments","type":"deploy","service":"payments","score":90,"confidence":"medium","components":[["landed 3 min before onset",50],["deployed the service that failed first",40]],"evidence":["deploy v6.4.0 to payments by r.lindqvist at 2026-10-11 16:27 (\"retry payment confirmations more aggressively\")"]},{"label":"fault inside payments","type":"service","service":"payments","score":80,"confidence":null,"components":[["showed the first anomaly",35],["upstream of 2 of 2 other affected services",25],["its own signals are severe or sustained",10],["share of the largest departure seen",10]],"evidence":["first anomalous signal of the incident: error_rate on payments at minute 9630","payments is called (directly or transitively) by gateway, orders","error_rate on payments peaked at z=259.68 (minute 9667)"]},{"label":"fault inside orders","type":"service","service":"orders","score":23,"confidence":null,"components":[["upstream of 1 of 2 other affected services",12],["its own signals are severe or sustained",10],["share of the largest departure seen",1]],"evidence":["orders is called (directly or transitively) by gateway","error_rate on orders peaked at z=27.27 (minute 9636)"]},{"label":"deploy v1.6.1 to auth","type":"deploy","service":"auth","score":15,"confidence":null,"components":[["deployed a dependency of an affected service",10],["landed 50 min before onset",5]],"evidence":["deploy v1.6.1 to auth by a.berg at 2026-10-11 15:40 (\"tidy logging\")"]},{"label":"fault inside gateway","type":"service","service":"gateway","score":11,"confidence":null,"components":[["its own signals are severe or sustained",10],["share of the largest departure seen",1]],"evidence":["error_rate on gateway peaked at z=19.22 (minute 9658)"]}],"similar":[{"incident_id":"INC-001","similarity":1.0,"start_min":3480,"shared_signals":["gateway/error_rate","orders/error_rate","payments/error_rate","payments/latency_ms","payments/new_template"]}],"charts":[{"service":"payments","metric":"error_rate","from":9540,"peak_z":259.7,"runs":[[9630,9667]],"values":[0.0067,0.0065,0.0069,0.0061,0.0054,0.007,0.006,0.0062,0.006,0.0069,0.0064,0.0069,0.0063,0.0067,0.0066,0.0066,0.0065,0.006,0.0065,0.0063,0.0069,0.0064,0.006,0.0059,0.0054,0.006,0.0056,0.0063,0.0065,0.006,0.0054,0.0064,0.0067,0.0067,0.0065,0.0064,0.0057,0.0057,0.0059,0.0065,0.006,0.0071,0.0069,0.0063,0.0065,0.0069,0.0059,0.0064,0.0057,0.0064,0.0062,0.0065,0.0063,0.0062,0.0061,0.0065,0.0051,0.0063,0.0062,0.0068,0.0071,0.0066,0.0062,0.0055,0.0067,0.0062,0.0068,0.0061,0.0064,0.0062,0.0059,0.0065,0.0065,0.0062,0.0061,0.0061,0.0062,0.0064,0.0066,0.006,0.0059,0.006,0.006,0.0068,0.0066,0.0064,0.0066,0.0071,0.0064,0.0058,0.0205,0.0372,0.0527,0.0638,0.0672,0.0705,0.0801,0.0787,0.0742,0.0755,0.0789,0.0747,0.072,0.0784,0.0706,0.0707,0.0777,0.0671,0.0657,0.0836,0.0693,0.0705,0.0803,0.0756,0.0717,0.0804,0.0755,0.0767,0.0709,0.0799,0.0745,0.0734,0.0697,0.0806,0.0704,0.0769,0.0776,0.0832,0.0059,0.0064,0.0061,0.0061,0.0057,0.0062,0.006,0.0057,0.0064,0.0068,0.0058,0.0059,0.0062,0.0055,0.0059,0.0064,0.007,0.0066,0.0063,0.006,0.0071,0.0066,0.006,0.0065,0.0059,0.0058,0.0063,0.006,0.0063,0.0063,0.0061,0.0066,0.0063,0.006,0.0057,0.0065,0.0061,0.0053,0.0064,0.0059,0.0061,0.0062,0.007,0.006,0.0062,0.0067,0.0067,0.0064,0.006,0.0064,0.0061,0.0062,0.005,0.005,0.0047,0.005,0.0051,0.0048,0.0044,0.0044]},{"service":"orders","metric":"error_rate","from":9540,"peak_z":27.3,"runs":[[9631,9667]],"values":[0.0075,0.007,0.0079,0.0081,0.0076,0.0075,0.0074,0.008,0.0084,0.0077,0.0076,0.0074,0.0071,0.0065,0.0079,0.0069,0.0082,0.007,0.0081,0.008,0.0073,0.0078,0.0079,0.0073,0.0083,0.0074,0.0076,0.0072,0.0077,0.007,0.0077,0.0075,0.0071,0.0076,0.0074,0.0069,0.0062,0.0075,0.0077,0.0072,0.0082,0.0069,0.008,0.0077,0.0069,0.007,0.0075,0.0078,0.0073,0.007,0.0071,0.0079,0.0073,0.008,0.0071,0.0072,0.0074,0.0078,0.0069,0.0078,0.0078,0.0072,0.0078,0.0066,0.0078,0.0083,0.0082,0.007,0.0065,0.0078,0.0076,0.0078,0.0086,0.0082,0.0067,0.0075,0.0072,0.0082,0.0074,0.0069,0.0084,0.0081,0.0071,0.007,0.0078,0.0076,0.0072,0.008,0.0069,0.0072,0.0097,0.012,0.0131,0.0165,0.018,0.0181,0.0195,0.0178,0.0172,0.0182,0.0188,0.0177,0.0167,0.0184,0.0161,0.0186,0.0183,0.0171,0.0186,0.0173,0.0187,0.018,0.0182,0.0169,0.0191,0.0168,0.0187,0.0172,0.0188,0.0183,0.0178,0.0169,0.0189,0.0186,0.0184,0.0181,0.018,0.0183,0.0077,0.0078,0.0075,0.0073,0.0068,0.0066,0.007,0.0074,0.0072,0.0069,0.0075,0.0071,0.0074,0.0078,0.0069,0.0079,0.0073,0.0077,0.0082,0.0079,0.0078,0.0082,0.0078,0.0079,0.0076,0.0065,0.0068,0.0074,0.0067,0.0076,0.0076,0.0074,0.0076,0.0077,0.0077,0.0085,0.0072,0.0066,0.0077,0.0078,0.0075,0.0072,0.008,0.0069,0.0071,0.0082,0.0069,0.0074,0.0086,0.0078,0.0075,0.0079,0.0058,0.0066,0.006,0.0062,0.0059,0.0061,0.0059,0.0062]},{"service":"gateway","metric":"error_rate","from":9540,"peak_z":19.2,"runs":[[9632,9667]],"values":[0.0047,0.0044,0.0054,0.0053,0.0054,0.0057,0.0054,0.0049,0.0048,0.0045,0.0045,0.005,0.0046,0.0051,0.0047,0.0052,0.005,0.005,0.0048,0.0051,0.005,0.0051,0.0049,0.0055,0.0046,0.0055,0.005,0.0053,0.005,0.0048,0.005,0.0053,0.0055,0.0049,0.0045,0.0047,0.0054,0.0045,0.0055,0.0048,0.0046,0.005,0.0052,0.0046,0.0046,0.0052,0.0044,0.0048,0.005,0.0046,0.0048,0.005,0.0048,0.0054,0.0051,0.0047,0.0051,0.0052,0.0049,0.0042,0.0048,0.0052,0.0049,0.0048,0.0047,0.005,0.0051,0.0051,0.0047,0.0051,0.0051,0.0054,0.005,0.0052,0.005,0.0052,0.0045,0.0046,0.0049,0.0043,0.0056,0.0048,0.0047,0.0051,0.0049,0.0052,0.0053,0.0045,0.0052,0.0052,0.0064,0.0067,0.0076,0.0089,0.0099,0.0086,0.0093,0.009,0.0089,0.01,0.0096,0.0102,0.0098,0.0096,0.01,0.0084,0.0098,0.0102,0.0094,0.0102,0.0095,0.0097,0.0099,0.0094,0.0095,0.0086,0.0102,0.0095,0.0107,0.0092,0.0091,0.01,0.0092,0.0095,0.01,0.0091,0.0097,0.008,0.0049,0.0047,0.0052,0.0053,0.0047,0.0045,0.0048,0.0051,0.0049,0.0051,0.0048,0.0053,0.0053,0.0051,0.0057,0.0048,0.0052,0.0049,0.0051,0.0049,0.0052,0.0044,0.0049,0.0051,0.0055,0.0055,0.005,0.0046,0.0047,0.005,0.005,0.005,0.0049,0.0058,0.0052,0.0052,0.0049,0.0054,0.0051,0.0055,0.0049,0.005,0.0047,0.0054,0.0051,0.0048,0.0054,0.0056,0.0052,0.0054,0.0056,0.0053,0.0038,0.0039,0.004,0.004,0.0043,0.0046,0.0039,0.0039]},{"service":"payments","metric":"latency_ms","from":9540,"peak_z":11.5,"runs":[[9632,9667]],"values":[124.9,127.2,119.3,125.5,120.6,132.8,109.9,125.1,122.3,118.5,116.6,118.5,108.2,122.1,119.5,115.3,120.4,124.7,108.7,110.4,103.3,116.7,124.2,117.8,113.3,119.5,120.2,119.9,124.6,114.8,123.5,119.1,125.4,125.3,126.3,114.2,122.6,115.1,118.5,114.9,119.4,121.6,119.5,115.1,122.9,123.2,118.3,116.4,120.6,125.4,121.8,116.9,108.9,132.1,112.4,121.4,126.1,127.2,121.0,127.6,110.4,105.3,112.3,124.2,115.7,125.1,122.7,117.5,130.4,115.4,118.2,117.9,122.3,121.6,129.4,125.5,111.7,114.2,115.0,123.0,113.7,120.4,110.9,128.7,124.1,124.1,122.4,121.3,113.7,121.3,128.2,146.9,159.0,164.6,167.8,158.7,173.9,160.5,170.8,174.6,169.3,170.2,184.5,177.3,185.5,181.3,181.3,188.9,196.1,177.6,170.1,168.1,181.4,164.4,172.7,193.8,181.5,187.7,190.9,177.0,179.5,157.1,180.5,194.8,190.2,167.4,168.5,165.5,112.1,126.2,124.7,113.8,129.4,117.8,118.9,120.3,115.0,131.3,115.6,120.8,120.4,121.2,111.5,130.8,119.8,127.9,105.3,121.0,119.9,119.2,123.7,112.5,120.4,125.9,113.5,113.7,126.1,107.5,126.5,128.5,110.3,127.1,121.3,114.5,123.6,108.4,111.8,109.6,116.2,104.6,126.8,111.3,106.3,129.5,117.1,110.6,127.6,112.3,100.2,122.4,103.2,102.8,95.57,100.5,95.59,93.98,99.87,109.7]}],"deploys":[{"minute":9561,"label":"v1.6.2 to gateway"},{"minute":9627,"label":"v6.4.0 to payments"}],"new_lines":[{"service":"payments","text":"payment gateway timeout after <NUM>ms req=<HEX> retry=<NUM>","first":9630,"peak":19}]},{"id":"INC-005","start":9806,"end":9814,"services":["db-proxy"],"first_service":"db-proxy","first_signal":"error_rate","severity":"medium","planted":null,"planted_start":null,"alerts":[],"timeline":[{"minute":9806,"service":"db-proxy","event":"error_rate on db-proxy departed baseline (z=6.74)","kind":"metric"},{"minute":9814,"service":"db-proxy","event":"error_rate on db-proxy departed baseline (z=6.74)","kind":"metric"}],"causes":[{"label":"fault inside db-proxy","type":"service","service":"db-proxy","score":45,"confidence":"low -- the top two candidates are close; treat as a hypothesis","components":[["showed the first anomaly",35],["share of the largest departure seen",10]],"evidence":["first anomalous signal of the incident: error_rate on db-proxy at minute 9806","error_rate on db-proxy peaked at z=6.74 (minute 9806)"]}],"similar":[],"charts":[{"service":"db-proxy","metric":"error_rate","from":9716,"peak_z":6.7,"runs":[[9806,9806],[9814,9814]],"values":[0.0012,0.0011,0.0013,0.0014,0.001,0.001,0.001,0.0009,0.0009,0.001,0.0011,0.0011,0.001,0.001,0.001,0.001,0.001,0.001,0.001,0.001,0.0009,0.0011,0.0009,0.001,0.0009,0.001,0.001,0.0011,0.001,0.001,0.001,0.001,0.001,0.001,0.001,0.001,0.001,0.001,0.0011,0.0011,0.001,0.001,0.0009,0.001,0.0009,0.0011,0.001,0.001,0.0011,0.0009,0.0009,0.0009,0.001,0.001,0.0009,0.001,0.0011,0.0009,0.001,0.001,0.001,0.0009,0.001,0.0009,0.001,0.0009,0.001,0.001,0.001,0.001,0.001,0.0009,0.0011,0.0009,0.001,0.0009,0.0009,0.001,0.001,0.001,0.001,0.001,0.001,0.0008,0.0011,0.001,0.001,0.0009,0.0011,0.0009,0.0012,0.0011,0.001,0.001,0.001,0.0011,0.001,0.0009,0.0012,0.0009,0.0011,0.001,0.0011,0.001,0.001,0.0011,0.001,0.001,0.001,0.001,0.001,0.0009,0.001,0.001,0.001,0.001,0.001,0.001,0.001,0.001,0.0011,0.001,0.001,0.0011,0.001,0.001,0.001,0.0009,0.001,0.001,0.001,0.001,0.0011,0.001,0.001,0.001,0.0009,0.001,0.0009,0.001,0.001,0.0009,0.001,0.001,0.001,0.001,0.0011,0.001,0.0011,0.0011,0.001,0.0009,0.0011,0.001,0.0009,0.001,0.0009,0.0009,0.0011]}],"deploys":[],"new_lines":[]}],"checks":[{"id":"bad-deploy-1","service":"payments","real":true,"start":3480,"duration":42,"notes":"A deploy raises the error rate on payments; orders and gateway see it downstream.","incident":"INC-001","alert_delay":6,"detect_delay":0,"ranked":"deploy/payments","wanted":"deploy/payments","cause_correct":true},{"id":"memory-leak","service":"search","real":true,"start":4800,"duration":360,"notes":"Memory climbs for six hours before latency follows. Slow enough that a trailing baseline climbs with it and holds only half the fault's minutes, against 79% for a fixed reference baseline.","incident":"INC-002","alert_delay":288,"detect_delay":74,"ranked":"service/search","wanted":"service/search","cause_correct":true},{"id":"db-slowdown","service":"db-proxy","real":true,"start":8040,"duration":55,"notes":"db-proxy latency jumps and spreads to its three callers. One incident, not four.","incident":"INC-003","alert_delay":4,"detect_delay":0,"ranked":"service/db-proxy","wanted":"service/db-proxy","cause_correct":true},{"id":"noisy-alert","service":"notify","real":false,"start":8820,"duration":8,"notes":"An alert fires with no metric anomaly and no log spike behind it. Must NOT become an incident.","incident":null,"alert_delay":0},{"id":"bad-deploy-2","service":"payments","real":true,"start":9630,"duration":38,"notes":"The same pattern again, so similarity matching has something true to find.","incident":"INC-004","alert_delay":6,"detect_delay":0,"ranked":"deploy/payments","wanted":"deploy/payments","cause_correct":true}],"repeat_link":{"later":"INC-004","first":"INC-001","similarity":1.0},"baselines":[{"id":"bad-deploy-1","duration":42,"reference":{"covered":42,"onset":0},"trailing":{"covered":42,"onset":0}},{"id":"memory-leak","duration":360,"reference":{"covered":286,"onset":74},"trailing":{"covered":183,"onset":74}},{"id":"db-slowdown","duration":55,"reference":{"covered":55,"onset":0},"trailing":{"covered":55,"onset":0}},{"id":"bad-deploy-2","duration":38,"reference":{"covered":38,"onset":0},"trailing":{"covered":38,"onset":0}}],"rejected_sources":[["db-proxy / error_rate",27],["payments / disk_usage_above_70pct",2],["gateway / disk_usage_above_70pct",1],["db-proxy / disk_usage_above_70pct",1],["inventory / disk_usage_above_70pct",1],["notify / disk_usage_above_70pct",1],["notify / synthetic_probe_flapped",1],["orders / disk_usage_above_70pct",1]],"rejected_marks":[{"minute":260,"alert_only":true},{"minute":1551,"alert_only":false},{"minute":1617,"alert_only":false},{"minute":1700,"alert_only":false},{"minute":1839,"alert_only":false},{"minute":2581,"alert_only":false},{"minute":2611,"alert_only":false},{"minute":3140,"alert_only":true},{"minute":3921,"alert_only":false},{"minute":4021,"alert_only":false},{"minute":4044,"alert_only":false},{"minute":4246,"alert_only":false},{"minute":4477,"alert_only":false},{"minute":4580,"alert_only":true},{"minute":4708,"alert_only":false},{"minute":5349,"alert_only":false},{"minute":5472,"alert_only":false},{"minute":6020,"alert_only":false},{"minute":6045,"alert_only":false},{"minute":6565,"alert_only":false},{"minute":6802,"alert_only":false},{"minute":6834,"alert_only":false},{"minute":6908,"alert_only":false},{"minute":7123,"alert_only":false},{"minute":7180,"alert_only":false},{"minute":7460,"alert_only":true},{"minute":8523,"alert_only":false},{"minute":8820,"alert_only":true},{"minute":8900,"alert_only":true},{"minute":9087,"alert_only":false},{"minute":9138,"alert_only":false},{"minute":9693,"alert_only":false},{"minute":10033,"alert_only":false}],"alerts":[{"minute":260,"service":"payments","rule":"disk_usage_above_70pct"},{"minute":1700,"service":"gateway","rule":"disk_usage_above_70pct"},{"minute":3140,"service":"payments","rule":"disk_usage_above_70pct"},{"minute":3486,"service":"payments","rule":"error_rate_above_5pct"},{"minute":4580,"service":"db-proxy","rule":"disk_usage_above_70pct"},{"minute":5088,"service":"search","rule":"memory_above_90pct"},{"minute":6020,"service":"inventory","rule":"disk_usage_above_70pct"},{"minute":7460,"service":"notify","rule":"disk_usage_above_70pct"},{"minute":8044,"service":"db-proxy","rule":"latency_p99_above_slo"},{"minute":8820,"service":"notify","rule":"synthetic_probe_flapped"},{"minute":8900,"service":"orders","rule":"disk_usage_above_70pct"},{"minute":9636,"service":"payments","rule":"error_rate_above_5pct"}],"deploys":[{"minute":1996,"service":"orders","version":"v1.1.6"},{"minute":2352,"service":"notify","version":"v1.1.2"},{"minute":3477,"service":"payments","version":"v2.4.0"},{"minute":3566,"service":"db-proxy","version":"v1.2.3"},{"minute":5105,"service":"orders","version":"v1.3.8"},{"minute":5125,"service":"db-proxy","version":"v1.3.0"},{"minute":6443,"service":"notify","version":"v1.4.8"},{"minute":6663,"service":"payments","version":"v1.4.5"},{"minute":7741,"service":"gateway","version":"v1.5.2"},{"minute":8138,"service":"orders","version":"v1.5.2"},{"minute":9561,"service":"gateway","version":"v1.6.2"},{"minute":9580,"service":"auth","version":"v1.6.1"},{"minute":9627,"service":"payments","version":"v6.4.0"}],"templates":[{"id":0,"text":"session refreshed for user <NUM> from <IP>","count":27004,"new":false},{"id":1,"text":"db query took <NUM>ms rows=<NUM>","count":26846,"new":false},{"id":2,"text":"cache hit key=user:<NUM> ttl=<NUM>s","count":26528,"new":false},{"id":3,"text":"handled request id=<HEX> path=/v1/orders status=<NUM> in <NUM>ms","count":4583,"new":false},{"id":4,"text":"handled request id=<HEX> path=/v1/status status=<NUM> in <NUM>ms","count":4558,"new":false},{"id":5,"text":"handled request id=<HEX> path=/v1/profile status=<NUM> in <NUM>ms","count":4544,"new":false},{"id":6,"text":"handled request id=<HEX> path=/v1/checkout status=<NUM> in <NUM>ms","count":4499,"new":false},{"id":7,"text":"handled request id=<HEX> path=/v1/search status=<NUM> in <NUM>ms","count":4429,"new":false},{"id":8,"text":"handled request id=<HEX> path=/v1/items status=<NUM> in <NUM>ms","count":4426,"new":false},{"id":9,"text":"outbound call to gateway ok in <NUM>ms","count":3437,"new":false},{"id":10,"text":"outbound call to db-proxy ok in <NUM>ms","count":3435,"new":false},{"id":11,"text":"outbound call to inventory ok in <NUM>ms","count":3398,"new":false},{"id":12,"text":"outbound call to orders ok in <NUM>ms","count":3390,"new":false},{"id":13,"text":"outbound call to notify ok in <NUM>ms","count":3382,"new":false},{"id":14,"text":"outbound call to payments ok in <NUM>ms","count":3323,"new":false},{"id":15,"text":"outbound call to search ok in <NUM>ms","count":3317,"new":false},{"id":16,"text":"outbound call to auth ok in <NUM>ms","count":3301,"new":false},{"id":17,"text":"payment gateway timeout after <NUM>ms req=<HEX> retry=<NUM>","count":554,"new":true},{"id":18,"text":"allocation slow: heap <NUM>% used, gc pause <NUM>ms","count":363,"new":true},{"id":19,"text":"connection pool exhausted, waited <NUM>ms for a slot","count":242,"new":true}]}</script>
+<script>
+(function () {
+  var D = JSON.parse(document.getElementById('payload').textContent);
+  if (!D) { document.getElementById('detail').textContent = 'No data. Run build_site.py.'; return; }
+  var START = new Date(D.start);
+  var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  var MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var NS = 'http://www.w3.org/2000/svg';
+  function at(m) { return new Date(START.getTime() + m * 60000); }
+  function p2(n) { return (n < 10 ? '0' : '') + n; }
+  function hm(m) { var d = at(m); return p2(d.getHours()) + ':' + p2(d.getMinutes()); }
+  function dayhm(m) { var d = at(m); return DAYS[d.getDay()] + ' ' + p2(d.getDate()) + ' ' + MON[d.getMonth()] + ' ' + hm(m); }
+  function dur(n) { return n >= 120 ? Math.floor(n / 60) + ' h ' + p2(n % 60) + ' min' : n + ' min'; }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function sv(tag, attrs, text) { var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; }
+  function fmtVal(metric, v) {
+    if (metric === 'error_rate') return (v * 100).toFixed(v === 0 ? 0 : v < 0.01 ? 2 : v < 0.02 ? 1 : 0) + '%';
+    if (metric === 'latency_ms') return Math.round(v) + ' ms';
+    return Math.round(v) + '%';
+  }
+  var METRIC = { error_rate: 'error rate', latency_ms: 'latency', cpu_pct: 'CPU', memory_pct: 'memory' };
+  function plain(text) {
+    return text.replace(/new_template:\d+/g, 'a new log line').replace(/template_spike:\d+/g, 'a log spike')
+      .replace(/error_rate/g, 'error rate').replace(/latency_ms/g, 'latency').replace(/memory_pct/g, 'memory').replace(/cpu_pct/g, 'CPU')
+      .replace(/^log a new log line on (\S+), /, 'new log line, ');
+  }
+
+  /* ---------- headline numbers ---------- */
+  var leak = D.checks.filter(function (c) { return c.id === 'memory-leak'; })[0];
+  var causesRight = D.checks.filter(function (c) { return c.real && c.cause_correct; }).length;
+  var noiseOk = D.checks.filter(function (c) { return !c.real && !c.incident; }).length;
+  var stats = [
+    [D.counts.real_found + ' of ' + D.counts.real_planted, 'real faults detected', ''],
+    [causesRight + ' of ' + D.counts.real_planted, 'planted causes ranked first', ''],
+    [leak && leak.alert_delay != null ? dur(leak.alert_delay - leak.detect_delay) : 'n/a', 'earlier than the existing alert on the slow memory leak', ''],
+    [String(noiseOk), noiseOk === 1 ? 'noisy alert correctly not promoted' : 'noisy alerts correctly not promoted', ''],
+    [String(D.counts.false_incidents), D.counts.false_incidents === 1 ? 'false incident, from one low-baseline series' : 'false incidents', D.counts.false_incidents ? 'bad' : '']
+  ];
+  var sEl = document.getElementById('stats');
+  stats.forEach(function (s) { var d = el('div', 'stat num ' + s[2]); d.appendChild(el('b', null, s[0])); d.appendChild(el('span', null, s[1])); sEl.appendChild(d); });
+
+  /* ---------- the week strip ---------- */
+  var selected = null;
+  function drawWeek() {
+    var host = document.getElementById('week'); host.textContent = '';
+    var W = Math.max(280, host.clientWidth), lanes = ['Incidents', 'Alerts', 'Deploys', 'Rejected'];
+    var laneH = 16, gap = 20, top = 14, H = top + lanes.length * (laneH + gap) + 16;
+    var x = function (m) { return (m / D.minutes) * W; };
+    var s = sv('svg', { width: W, height: H, viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'Timeline of the week' });
+    s.appendChild(sv('rect', { x: 0, y: top, width: x(D.reference_hours * 60), height: H - top - 16, fill: 'var(--sunk)' }));
+    for (var d = 0; d <= 7; d++) {
+      s.appendChild(sv('line', { x1: x(d * 1440), x2: x(d * 1440), y1: top, y2: H - 16, stroke: 'var(--line)', 'stroke-width': 1 }));
+      if (d < 7) s.appendChild(sv('text', { x: x(d * 1440) + 4, y: H - 3 }, DAYS[at(d * 1440).getDay()] + (W > 520 ? ' ' + at(d * 1440).getDate() : '')));
+    }
+    lanes.forEach(function (name, i) {
+      var y = top + i * (laneH + gap) + 12;
+      s.appendChild(sv('text', { x: x(D.reference_hours * 60) + 6, y: y - 3, 'font-size': 10.5 }, name));
+      s.appendChild(sv('line', { x1: 0, x2: W, y1: y + laneH / 2, y2: y + laneH / 2, stroke: 'var(--line)', 'stroke-width': 1 }));
+      if (i === 0) D.incidents.forEach(function (inc) {
+        var w = Math.max(5, x(inc.end) - x(inc.start));
+        var r = sv('rect', { x: x(inc.start), y: y, width: w, height: laneH, rx: 2, fill: 'var(--crit)', style: 'cursor:pointer',
+          opacity: selected === inc.id ? 1 : 0.55, stroke: selected === inc.id ? 'var(--ink)' : 'none', 'stroke-width': 1.5 });
+        r.appendChild(sv('title', {}, inc.id + ', ' + dayhm(inc.start)));
+        r.addEventListener('click', function () { select(inc.id); });
+        s.appendChild(r);
+      });
+      var marks = i === 1 ? D.alerts : i === 2 ? D.deploys : i === 3 ? D.rejected_marks.filter(function (r) { return !r.alert_only; }) : [];
+      var fill = i === 1 ? 'var(--warn)' : i === 2 ? 'var(--accent)' : 'var(--muted)';
+      marks.forEach(function (mk) {
+        var r = sv('rect', { x: x(mk.minute) - 1.25, y: y + (i === 3 ? 4 : 0), width: 2.5, height: i === 3 ? laneH - 8 : laneH, fill: fill });
+        r.appendChild(sv('title', {}, dayhm(mk.minute) + (mk.rule ? ', ' + mk.rule + ' on ' + mk.service : mk.version ? ', ' + mk.version + ' to ' + mk.service : '')));
+        s.appendChild(r);
+      });
+    });
+    host.appendChild(s);
+  }
+
+  /* ---------- incident list ---------- */
+  var list = document.getElementById('list');
+  D.incidents.forEach(function (inc) {
+    var b = el('button', 'inc-btn'); b.type = 'button'; b.id = 'btn-' + inc.id;
+    var r1 = el('div', 'row'); r1.appendChild(el('span', 'id', inc.id));
+    r1.appendChild(el('span', 'pill ' + (inc.planted ? 'real' : 'false'), inc.planted ? 'real fault' : 'false alarm'));
+    var top = inc.causes[0];
+    b.appendChild(r1);
+    b.appendChild(el('span', 'what', top ? top.label : 'no candidate'));
+    b.appendChild(el('span', 'when', dayhm(inc.start) + ', ' + dur(inc.end - inc.start + 1)));
+    b.addEventListener('click', function () { select(inc.id); });
+    list.appendChild(b);
+  });
+
+  /* ---------- one chart ---------- */
+  function drawChart(host, c, inc) {
+    host.textContent = '';
+    var W = Math.max(240, host.clientWidth), H = 150, L = 48, R = 8, T = 8, B = 20;
+    var vals = c.values, n = vals.length;
+    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    if (c.metric === 'error_rate' || c.metric === 'latency_ms') lo = 0;
+    else lo = Math.max(0, lo - (hi - lo) * 0.15);
+    hi = hi + (hi - lo) * 0.08;
+    var x = function (m) { return L + ((m - c.from) / (n - 1)) * (W - L - R); };
+    var y = function (v) { return T + (1 - (v - lo) / (hi - lo)) * (H - T - B); };
+    var s = sv('svg', { width: W, height: H, viewBox: '0 0 ' + W + ' ' + H, role: 'img',
+      'aria-label': METRIC[c.metric] + ' on ' + c.service });
+    c.runs.forEach(function (r) {
+      s.appendChild(sv('rect', { x: x(r[0]), y: T, width: Math.max(2, x(r[1]) - x(r[0])), height: H - T - B, fill: 'var(--crit-soft)' }));
+    });
+    [0, 0.5, 1].forEach(function (f) {
+      var v = lo + (hi - lo) * f * 0.92, yy = y(v);
+      s.appendChild(sv('line', { x1: L, x2: W - R, y1: yy, y2: yy, stroke: 'var(--line)', 'stroke-width': 1 }));
+      s.appendChild(sv('text', { x: L - 6, y: yy + 4, 'text-anchor': 'end' }, fmtVal(c.metric, v)));
+    });
+    var end = c.from + n - 1;
+    [[c.from, 'start'], [Math.round((c.from + end) / 2), 'middle'], [end, 'end']].forEach(function (t) {
+      s.appendChild(sv('text', { x: x(t[0]), y: H - 5, 'text-anchor': t[1] }, hm(t[0])));
+    });
+    function vline(m, color, dash) {
+      if (m < c.from || m > end) return;
+      var a = { x1: x(m), x2: x(m), y1: T, y2: H - B, stroke: color, 'stroke-width': 1.5 };
+      if (dash) a['stroke-dasharray'] = '4 3';
+      s.appendChild(sv('line', a));
+    }
+    if (inc.planted_start != null) vline(inc.planted_start, 'var(--muted)', true);
+    inc.deploys.forEach(function (d) { vline(d.minute, 'var(--accent)', false); });
+    inc.alerts.forEach(function (a) { vline(a.minute, 'var(--warn)', false); });
+    var step = Math.max(1, Math.floor(n / (W - L - R)));
+    var pts = [];
+    for (var i = 0; i < n; i += step) pts.push(x(c.from + i).toFixed(1) + ',' + y(vals[i]).toFixed(1));
+    s.appendChild(sv('polyline', { points: pts.join(' '), fill: 'none', stroke: 'var(--ink)', 'stroke-width': 1.3, 'stroke-linejoin': 'round' }));
+    host.appendChild(s);
+  }
+
+  /* ---------- incident detail ---------- */
+  var chartJobs = [];
+  function select(id, quiet) {
+    var inc = D.incidents.filter(function (i) { return i.id === id; })[0] || D.incidents[0];
+    if (!inc) return;
+    selected = inc.id;
+    D.incidents.forEach(function (i) { document.getElementById('btn-' + i.id).setAttribute('aria-pressed', i.id === inc.id ? 'true' : 'false'); });
+    if (!quiet) { try { history.replaceState(null, '', '#' + inc.id.toLowerCase()); } catch (e) { location.hash = inc.id.toLowerCase(); } }
+    var box = document.getElementById('detail'); box.textContent = ''; chartJobs = [];
+
+    var head = el('div'); head.style.cssText = 'display:flex;flex-direction:column;gap:10px';
+    var tr = el('div', 'titlerow');
+    tr.appendChild(el('h3', 'mono', inc.id));
+    tr.appendChild(el('span', 'pill ' + (inc.planted ? 'real' : 'false'), inc.planted ? 'matches planted fault ' + inc.planted : 'not a planted fault'));
+    head.appendChild(tr);
+    head.appendChild(el('p', null, dayhm(inc.start) + ' to ' + hm(inc.end) + ', ' + dur(inc.end - inc.start + 1)));
+    var chips = el('div', 'chips');
+    inc.services.forEach(function (sname) { chips.appendChild(el('span', 'chip' + (sname === inc.first_service ? ' first' : ''), sname + (sname === inc.first_service ? ' (first)' : ''))); });
+    head.appendChild(chips);
+    box.appendChild(head);
+
+    var top = inc.causes[0];
+    if (top) {
+      var v = el('div', 'verdict');
+      v.appendChild(el('span', 'label', 'Most likely cause'));
+      var cr = el('div', 'titlerow'); cr.appendChild(el('span', 'cause', top.label));
+      var conf = (top.confidence || '').split(' ')[0];
+      cr.appendChild(el('span', 'pill conf-' + conf, conf + ' confidence'));
+      v.appendChild(cr);
+      if (inc.causes[1]) v.appendChild(el('p', 'lede', 'Scored ' + top.score + ', against ' + inc.causes[1].score + ' for the next candidate (' + inc.causes[1].label + ').'));
+      else v.appendChild(el('p', 'lede', 'Scored ' + top.score + '. It is the only candidate, so treat it as a hypothesis.'));
+      box.appendChild(v);
+    }
+    if (inc.similar.length) {
+      var sm = inc.similar[0], sp = el('p');
+      sp.appendChild(document.createTextNode('Seen before: '));
+      var a = el('a', null, sm.incident_id); a.href = '#' + sm.incident_id.toLowerCase(); a.style.color = 'var(--accent)';
+      a.addEventListener('click', function (e) { e.preventDefault(); select(sm.incident_id); });
+      sp.appendChild(a);
+      sp.appendChild(document.createTextNode(' on ' + dayhm(sm.start_min) + ', symptom similarity ' + sm.similarity.toFixed(2) + '.'));
+      box.appendChild(sp);
+    }
+
+    var cs = el('div'); cs.style.cssText = 'display:flex;flex-direction:column;gap:12px';
+    cs.appendChild(el('span', 'label', 'Signals that left their baseline'));
+    var grid = el('div', 'charts');
+    inc.charts.forEach(function (c) {
+      var w = el('div', 'chart'), cap = el('div', 'cap');
+      cap.appendChild(el('span', null, c.service + ' ' + METRIC[c.metric]));
+      cap.appendChild(el('span', 'num', 'peak z ' + c.peak_z));
+      var h = el('div'); w.appendChild(cap); w.appendChild(h); grid.appendChild(w);
+      chartJobs.push(function () { drawChart(h, c, inc); });
+    });
+    cs.appendChild(grid);
+    var lg = el('div', 'legend');
+    lg.innerHTML = '<span><i style="background:var(--crit-soft)"></i>flagged minutes</span>' +
+      (inc.planted_start != null ? '<span><i class="dash" style="border-color:var(--muted)"></i>fault actually began</span>' : '') +
+      (inc.deploys.length ? '<span><i class="ln" style="border-color:var(--accent)"></i>deploy</span>' : '') +
+      (inc.alerts.length ? '<span><i class="ln" style="border-color:var(--warn)"></i>alert fired</span>' : '');
+    cs.appendChild(lg);
+    box.appendChild(cs);
+
+    if (inc.new_lines.length) {
+      var nl = el('div'); nl.style.cssText = 'display:flex;flex-direction:column;gap:8px';
+      nl.appendChild(el('span', 'label', 'Log line the system had never written before'));
+      inc.new_lines.slice(0, 2).forEach(function (l) {
+        nl.appendChild(el('div', 'logline', '[' + l.service + '] ' + l.text));
+        nl.appendChild(el('p', 'lede', 'First seen ' + dayhm(l.first) + ', up to ' + l.peak + ' lines a minute.'));
+      });
+      box.appendChild(nl);
+    }
+
+    var tw = el('div'); tw.style.cssText = 'display:flex;flex-direction:column;gap:8px';
+    tw.appendChild(el('span', 'label', 'Timeline'));
+    var ul = el('ul', 'tl');
+    inc.timeline.forEach(function (r) {
+      var li = el('li', r.kind === 'alert' ? 'alert' : '');
+      li.appendChild(el('span', 't', hm(r.minute))); li.appendChild(el('span', 's', r.service)); li.appendChild(el('span', 'e', plain(r.event)));
+      ul.appendChild(li);
+    });
+    tw.appendChild(ul); box.appendChild(tw);
+
+    var cw = el('div'); cw.style.cssText = 'display:flex;flex-direction:column;gap:12px';
+    cw.appendChild(el('span', 'label', 'Candidates considered, with the arithmetic'));
+    var holder = el('div');
+    inc.causes.slice(0, 4).forEach(function (c, i) {
+      var d = el('div', 'cand' + (i === 0 ? ' top' : ''));
+      var hd = el('div', 'hd'); hd.appendChild(el('b', null, c.label)); hd.appendChild(el('span', 'mono num', 'score ' + c.score));
+      d.appendChild(hd);
+      var bar = el('div', 'bar'), fill = el('i'); fill.style.width = Math.min(100, c.score) + '%'; bar.appendChild(fill); d.appendChild(bar);
+      var ul2 = el('ul');
+      c.components.forEach(function (k) { var li = el('li'); li.appendChild(el('span', null, '+' + k[1])); li.appendChild(el('span', null, k[0])); ul2.appendChild(li); });
+      d.appendChild(ul2);
+      c.evidence.forEach(function (e) { d.appendChild(el('div', 'ev', 'Evidence: ' + plain(e))); });
+      holder.appendChild(d);
+    });
+    cw.appendChild(holder); box.appendChild(cw);
+
+    chartJobs.forEach(function (f) { f(); });
+    drawWeek();
+  }
+
+  /* ---------- self-check table ---------- */
+  var ck = document.getElementById('checks');
+  ck.innerHTML = '<thead><tr><th>Planted event</th><th>Kind</th><th>Found as</th><th>Detected</th><th>Existing alert</th><th>Cause ranked first</th></tr></thead>';
+  var tb = el('tbody');
+  D.checks.forEach(function (c) {
+    var tr = el('tr');
+    tr.appendChild(el('td', 'mono', c.id));
+    tr.appendChild(el('td', null, c.real ? 'real fault on ' + c.service : 'noise on ' + c.service));
+    if (c.real) {
+      tr.appendChild(el('td', 'mono ' + (c.incident ? '' : 'badc'), c.incident || 'missed'));
+      tr.appendChild(el('td', 'n', c.incident ? '+' + c.detect_delay + ' min' : ''));
+      tr.appendChild(el('td', 'n', c.alert_delay != null ? '+' + c.alert_delay + ' min' : 'never'));
+      tr.appendChild(el('td', c.cause_correct ? 'okc' : 'badc', c.incident ? c.ranked.replace('/', ' / ') + (c.cause_correct ? ', correct' : ', wrong') : ''));
+    } else {
+      tr.appendChild(el('td', c.incident ? 'badc' : 'okc', c.incident ? 'wrongly promoted' : 'not promoted, correct'));
+      tr.appendChild(el('td', 'n', '')); tr.appendChild(el('td', 'n', c.alert_delay != null ? '+' + c.alert_delay + ' min' : ''));
+      tr.appendChild(el('td', null, 'none expected'));
+    }
+    tb.appendChild(tr);
+  });
+  ck.appendChild(tb);
+  if (D.repeat_link) {
+    var note = el('p', 'lede', 'Repeat link: ' + D.repeat_link.later + ' was matched to ' + D.repeat_link.first + ' at symptom similarity ' + D.repeat_link.similarity.toFixed(2) + '.');
+    note.style.marginTop = '12px'; ck.parentNode.appendChild(note);
+  }
+
+  /* ---------- baseline coverage ---------- */
+  var cov = document.getElementById('cov');
+  D.baselines.forEach(function (b) {
+    var row = el('div', 'covrow'), hd = el('div', 'hd');
+    hd.style.cssText = 'display:flex;justify-content:space-between;gap:8px';
+    hd.appendChild(el('span', 'mono', b.id)); hd.appendChild(el('span', 'lede num', dur(b.duration)));
+    row.appendChild(hd);
+    [['reference', 'ref'], ['trailing', 'trail']].forEach(function (k) {
+      var r = b[k[0]], pct = Math.round(100 * r.covered / b.duration);
+      var line = el('div', 'covbar'), bar = el('div', 'bar'), fill = el('i', k[1]); fill.style.width = pct + '%'; bar.appendChild(fill);
+      line.appendChild(bar); line.appendChild(el('span', null, pct + '% (' + r.covered + '/' + b.duration + ')'));
+      row.appendChild(line);
+    });
+    cov.appendChild(row);
+  });
+
+  /* ---------- rejections ---------- */
+  var topRej = D.rejected_sources[0];
+  document.getElementById('rejlede').textContent = D.counts.rejected + ' clusters of signals were not promoted to incidents. ' +
+    (topRej ? topRej[1] + ' of them come from one series, ' + topRej[0].replace('_', ' ') + ', whose baseline is the smallest in the system.' : '');
+  var rj = document.getElementById('rej');
+  rj.innerHTML = '<thead><tr><th>Raised by</th><th>Clusters</th></tr></thead>';
+  var rb = el('tbody');
+  D.rejected_sources.forEach(function (r) { var tr = el('tr'); tr.appendChild(el('td', 'mono', r[0])); tr.appendChild(el('td', 'n', String(r[1]))); rb.appendChild(tr); });
+  rj.appendChild(rb);
+
+  /* ---------- templates ---------- */
+  var fresh = D.templates.filter(function (t) { return t.new; });
+  document.getElementById('tpllede').textContent = D.inputs.log_lines.toLocaleString('en-US') + ' log lines reduce to ' + D.inputs.templates +
+    ' distinct sentences once IDs and numbers are masked. ' + fresh.length + ' of them never appear in the first 24 hours, and each belongs to a planted fault.';
+  var tp = document.getElementById('tpl');
+  fresh.forEach(function (t) { tp.appendChild(el('div', 'logline', t.text + '   x' + t.count)); });
+
+  /* ---------- boot ---------- */
+  function fromHash() { var h = (location.hash || '').replace('#', '').toUpperCase(); return D.incidents.some(function (i) { return i.id === h; }) ? h : null; }
+  select(fromHash() || (D.incidents[0] && D.incidents[0].id), true);
+  window.addEventListener('hashchange', function () { var h = fromHash(); if (h && h !== selected) select(h, true); });
+  var timer; window.addEventListener('resize', function () { clearTimeout(timer); timer = setTimeout(function () { drawWeek(); chartJobs.forEach(function (f) { f(); }); }, 120); });
+})();
+</script>
+
+</body>
+</html>

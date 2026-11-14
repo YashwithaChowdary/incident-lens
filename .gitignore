@@ -1,0 +1,5 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+# generated, 37 MB: run scripts/make_sample_data.py
+data/
